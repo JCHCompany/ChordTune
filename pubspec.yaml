@@ -1,0 +1,54 @@
+name: flutter_tuner
+description: "A new Flutter project."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Localization (first‑party, recommended)
+  flutter_localizations:
+    sdk: flutter
+  intl: ^0.20.2  # i18n formatting, plural/gender support
+
+  # State, routing, networking
+  flutter_bloc: ^9.1.1
+  go_router: ^16.2.4
+  dio: ^5.9.0
+
+  # Auth / secure storage
+  google_sign_in: ^7.2.0
+  flutter_facebook_auth: ^7.1.2
+  flutter_secure_storage: ^9.2.4
+
+  # Persistence & filesystem
+  shared_preferences: ^2.5.3
+  path_provider: ^2.1.5
+
+  # Audio capture (maintained, supports raw PCM stream)
+  record: ^6.1.2
+
+  # On‑device ML (pick one or both depending on which model you deploy)
+  tflite_flutter: ^0.11.0    # requires Android minSdk 26
+  onnxruntime: ^1.4.1        # community plugin; validate on your devices
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+  build_runner: ^2.9.0
+  json_serializable: ^6.10.0
+
+  # If you want data classes & sealed unions (works with Dart 3.4):
+  freezed: ^3.2.3
+  freezed_annotation: ^3.1.0
+
+flutter:
+  uses-material-design: true
+  generate: true
