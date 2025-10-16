@@ -20,6 +20,7 @@ dependencies:
   flutter_bloc: ^9.1.1
   go_router: ^16.2.4
   dio: ^5.9.0
+  equatable: ^2.0.5
 
   # Auth / secure storage
   google_sign_in: ^7.2.0
@@ -36,6 +37,10 @@ dependencies:
   # On‑device ML (pick one or both depending on which model you deploy)
   tflite_flutter: ^0.11.0    # requires Android minSdk 26
   onnxruntime: ^1.4.1        # community plugin; validate on your devices
+  permission_handler: ^11.3.1
+
+  # Prevent screen from sleeping during tuning
+  wakelock_plus: ^1.2.8
 
 dev_dependencies:
   flutter_test:
@@ -52,3 +57,5 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   generate: true
+  assets:
+    - assets/models/swift_f0.onnx

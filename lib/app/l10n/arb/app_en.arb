@@ -1,5 +1,29 @@
 {
     "@@locale": "en",
     "appTitle": "Guitar Trainer",
-    "homeWelcome": "Welcome to the app shell"
+    "homeWelcome": "Welcome to the app shell",
+    "tunerTitle": "Tuner",
+    "tunerPlaceholderCents": "Deviation: {cents} cents",
+    "@tunerPlaceholderCents": {
+        "description": "Shows the cents deviation from target pitch",
+        "placeholders": {
+            "cents": {
+                "type": "num"
+            }
+        }
+    },
+    "tunerSampleNote": "Sample note: {note}",
+    "@tunerSampleNote": {
+        "description": "Label to show a sample note name",
+        "placeholders": {
+            "note": {
+                "type": "String"
+            }
+        }
+    },
+    "tunerMicRationale": "The tuner needs microphone access to detect pitch.",
+    "tunerGrantPermission": "Grant microphone access",
+    "tunerMicPermanentlyDenied": "Microphone access is permanently denied. Please enable it in Settings to use the tuner.",
+    "tunerOpenSettings": "Open Settings",
+    "tunerLock": "LOCK"
 }

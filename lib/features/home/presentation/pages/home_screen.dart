@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import '../../../../app/l10n/l10n.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -10,10 +11,27 @@ class HomeScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: Text(loc.appTitle)),
       body: Center(
-        child: Text(
-          loc.homeWelcome,
-          style: Theme.of(context).textTheme.titleLarge,
-          textAlign: TextAlign.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              loc.homeWelcome,
+              style: Theme.of(context).textTheme.titleLarge,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: () => context.go('/tuner'),
+              icon: const Icon(Icons.tune),
+              label: Text(loc.tunerTitle),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () => context.go('/research'),
+              icon: const Icon(Icons.science),
+              label: const Text('Accordeur R&D'),
+            ),
+          ],
         ),
       ),
     );

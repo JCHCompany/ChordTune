@@ -1,5 +1,29 @@
 {
     "@@locale": "fr",
     "appTitle": "Guitar Trainer",
-    "homeWelcome": "Bienvenue dans la coquille d'application"
+    "homeWelcome": "Bienvenue dans la coquille d'application",
+    "tunerTitle": "Accordeur",
+    "tunerPlaceholderCents": "Écart : {cents} cents",
+    "@tunerPlaceholderCents": {
+        "description": "Affiche l'écart en cents par rapport à la note cible",
+        "placeholders": {
+            "cents": {
+                "type": "num"
+            }
+        }
+    },
+    "tunerSampleNote": "Note exemple : {note}",
+    "@tunerSampleNote": {
+        "description": "Libellé pour afficher un nom de note",
+        "placeholders": {
+            "note": {
+                "type": "String"
+            }
+        }
+    },
+    "tunerMicRationale": "L'accordeur a besoin de l'accès au microphone pour détecter la hauteur.",
+    "tunerGrantPermission": "Autoriser le microphone",
+    "tunerMicPermanentlyDenied": "L'accès au microphone est interdit de façon permanente. Activez-le dans les Réglages pour utiliser l'accordeur.",
+    "tunerOpenSettings": "Ouvrir les réglages",
+    "tunerLock": "VERROU"
 }

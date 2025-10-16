@@ -1,0 +1,12 @@
+# Research Mode defaults - Optimisé pour guitare
+fs: 48000
+frame_ms: 30
+overlap: 0.75
+alpha_ema: 0.4
+tau_conf_low: 0.3
+tau_conf_high: 0.5
+K_lock: 3
+anti_octave: true
+fallback: auto
+whitening: false
+detector: mpm

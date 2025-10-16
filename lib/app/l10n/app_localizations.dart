@@ -109,6 +109,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Welcome to the app shell'**
   String get homeWelcome;
+
+  /// No description provided for @tunerTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Tuner'**
+  String get tunerTitle;
+
+  /// Shows the cents deviation from target pitch
+  ///
+  /// In en, this message translates to:
+  /// **'Deviation: {cents} cents'**
+  String tunerPlaceholderCents(num cents);
+
+  /// Label to show a sample note name
+  ///
+  /// In en, this message translates to:
+  /// **'Sample note: {note}'**
+  String tunerSampleNote(String note);
+
+  /// No description provided for @tunerMicRationale.
+  ///
+  /// In en, this message translates to:
+  /// **'The tuner needs microphone access to detect pitch.'**
+  String get tunerMicRationale;
+
+  /// No description provided for @tunerGrantPermission.
+  ///
+  /// In en, this message translates to:
+  /// **'Grant microphone access'**
+  String get tunerGrantPermission;
+
+  /// No description provided for @tunerMicPermanentlyDenied.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone access is permanently denied. Please enable it in Settings to use the tuner.'**
+  String get tunerMicPermanentlyDenied;
+
+  /// No description provided for @tunerOpenSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Settings'**
+  String get tunerOpenSettings;
+
+  /// No description provided for @tunerLock.
+  ///
+  /// In en, this message translates to:
+  /// **'LOCK'**
+  String get tunerLock;
 }
 
 class _AppLocalizationsDelegate
