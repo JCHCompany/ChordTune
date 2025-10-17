@@ -36,6 +36,7 @@ dependencies:
   # On‑device ML (pick one or both depending on which model you deploy)
   tflite_flutter: ^0.11.0    # requires Android minSdk 26
   onnxruntime: ^1.4.1        # community plugin; validate on your devices
+  wakelock_plus: ^1.4.0
 
 dev_dependencies:
   flutter_test:
