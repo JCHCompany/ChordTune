@@ -27,6 +27,7 @@ class HarmonicSalience {
     if (logFreqPower.isEmpty) return const HarmonicResult(0.0, 0.0);
     final tol = _tolRatio;
     double bestScore = 0.0;
+    double secondBestScore = 0.0;
     double bestFreq = 0.0;
     // Iterate candidate fundamentals within allowed range.
     for (int i = 0; i < freqs.length; i++) {
@@ -52,14 +53,19 @@ class HarmonicSalience {
         w *= weightDecay;
       }
       if (score > bestScore) {
+        // shift previous best to second best
+        secondBestScore = bestScore;
         bestScore = score;
         bestFreq = f;
+      } else if (score > secondBestScore) {
+        secondBestScore = score;
       }
     }
-    if (bestScore <= 0) return const HarmonicResult(0.0, 0.0);
-    // Confidence heuristic: ratio of best to mean of all explored (avoid second pass by using avg approx)
-    final conf = 1.0 / (1.0 + (bestFreq <= 0 ? 1.0 : 0.5)); // placeholder stable ~0.66
-    return HarmonicResult(bestFreq, conf.clamp(0.0, 1.0));
+    if (bestScore <= 0 || bestFreq <= 0) return const HarmonicResult(0.0, 0.0);
+    // Confidence heuristic: dominance of best vs runner-up (0.5 when equal, ->1 when dominant)
+    final denom = bestScore + secondBestScore + 1e-9;
+    final conf = (bestScore / denom).clamp(0.0, 1.0);
+    return HarmonicResult(bestFreq, conf);
   }
 
   int _lowerBound(List<double> a, double x) {

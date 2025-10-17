@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'dart:math' as math;
 import '../../../dsp/yin.dart' as yin_dsp;
 import '../../../dsp/harmonic_salience.dart';
@@ -34,6 +35,12 @@ class SpectroidFrame {
   final double predictedF0;
   final String lockReason;
   final double currentWindow;
+  // Optional: local noise floor estimate around tracked band (dB)
+  // Used for informing locked-state persistence behavior
+  // Not displayed currently but can be wired for debug
+  // This is the median of a band excluding the peak bins.
+  // 0.0 means not computed.
+  final double localNoiseFloorDb;
   
   SpectroidFrame(
     this.magLinear,
@@ -55,10 +62,13 @@ class SpectroidFrame {
     this.predictedF0,
     this.lockReason,
     this.currentWindow,
+    this.localNoiseFloorDb,
   );
 }
 
 class SpectroidEngine {
+  // Toggle to enable verbose DSP logs; disabled by default for performance
+  static const bool kDspVerboseLogs = false;
   final AudioRecorder _rec = AudioRecorder();
   StreamSubscription<Uint8List>? _sub;
   Timer? _scheduler;
@@ -139,6 +149,11 @@ class SpectroidEngine {
         peakProminenceDb: cfg.dominantPeakProminenceDb,
         neighborSpanBins: cfg.dominantNeighborSpanBins,
       );
+      // Configure locked-state SNR floor persistence from config
+      _dominantTracker!.lockedSnrFloorDb = cfg.lockedSnrFloorDb;
+      // Configure competitor margin behavior
+      _dominantTracker!.competitorMarginBaseDb = cfg.dominantCompetitorMarginBaseDb;
+      _dominantTracker!.competitorMarginAdaptiveSlope = cfg.dominantCompetitorMarginAdaptiveSlope;
     } else {
       _dominantTracker = null;
     }
@@ -153,20 +168,26 @@ class SpectroidEngine {
         hopSize: yinHop, // Updates très fréquents pour convergence rapide
         threshold: 0.10, // RESTAURÉ: Valeur historique équilibrée (was 0.08)
       );
-      print("YIN SETUP HISTORIQUE RESTAURÉ: windowSize=$yinWindow, hopSize=$yinHop, threshold=0.10, fs=$_effectiveFs");
+      if (kDspVerboseLogs) {
+        debugPrint("YIN SETUP HISTORIQUE RESTAURÉ: windowSize=$yinWindow, hopSize=$yinHop, threshold=0.10, fs=$_effectiveFs");
+      }
       _fusion = PitchFusion(
         wYin: 0.65, // RÉDUIT: Pour compenser YIN qui lâche tôt (was 0.75)
         wHarm: 0.35, // AUGMENTÉ: Harmonic plus d'influence pour compenser (was 0.25) 
         antiOctaveEnabled: true,
         subharmThresh: 0.5, // Valeur historique stable
       );
-      print("FUSION SETUP AMPLITUDE RESILIENT: wYin=65%, wHarm=35% (compense YIN amplitude)");
+      if (kDspVerboseLogs) {
+        debugPrint("FUSION SETUP AMPLITUDE RESILIENT: wYin=65%, wHarm=35% (compense YIN amplitude)");
+      }
     } else {
       _yin = null;
       _fusion = null;
     }
     
-  debugPrint('Audio: requested_fs=$sampleRate, actual_fs=$_effectiveFs, decim=$_decimM, unprocessed=${_audioStatus.unprocessedAvailable}, effects=${cfg.disableAudioEffects ? 'off' : 'on'}');
+  if (kDspVerboseLogs) {
+    debugPrint('Audio: requested_fs=$sampleRate, actual_fs=$_effectiveFs, decim=$_decimM, unprocessed=${_audioStatus.unprocessedAvailable}, effects=${cfg.disableAudioEffects ? 'off' : 'on'}');
+  }
 
     // Configure audio source and effects
     AudioSource audioSource = cfg.audioSource;
@@ -177,7 +198,9 @@ class SpectroidEngine {
         await _configureUnprocessedAudio();
         _audioStatus = _audioStatus.copyWith(unprocessedAvailable: true);
       } catch (e) {
-        debugPrint('UNPROCESSED source unavailable, falling back to VOICE_RECOGNITION: $e');
+        if (kDspVerboseLogs) {
+          debugPrint('UNPROCESSED source unavailable, falling back to VOICE_RECOGNITION: $e');
+        }
         audioSource = AudioSource.voiceRecognition;
         _audioStatus = _audioStatus.copyWith(unprocessedAvailable: false);
       }
@@ -286,7 +309,7 @@ class SpectroidEngine {
       }
 
       // Debug amplitude vs display data comparison
-      if (rawMag.isNotEmpty && displayData.isNotEmpty) {
+      if (kDspVerboseLogs && rawMag.isNotEmpty && displayData.isNotEmpty) {
         final int m = math.min(10, displayData.length);
         double ampSum = 0.0, displaySum = 0.0;
         for (int i = 0; i < m; i++) { ampSum += rawMag[i]; displaySum += displayData[i]; }
@@ -299,9 +322,11 @@ class SpectroidEngine {
         debugPrint('FFT N=${cfg.fftSize}: Amp[0..$m]=${ampDb.toStringAsFixed(1)} dB, Display[0..$m]=${displayDb.toStringAsFixed(1)} $unit');
       }
 
-  debugPrint('FFT: N=${cfg.fftSize}, window=${cfg.window.name}, coherent_gain=${wm.coherentGain.toStringAsFixed(6)}, ENBW_bins=${wm.enbwBins.toStringAsFixed(3)}, bin_width=${binWidth.toStringAsFixed(3)}Hz');
-  final modeStr = (cfg.displayMode == DisplayMode.psdPrecise) ? 'PSD_per_Hz' : 'Spectroid_per_bin';
-  debugPrint('Mode=$modeStr, decim=$_decimM, fs_eff=$_effectiveFs, hpf=${cfg.lowFreqHpf.name}, hz_per_bin_at_DC=${binWidth.toStringAsFixed(3)}');
+  if (kDspVerboseLogs) {
+    debugPrint('FFT: N=${cfg.fftSize}, window=${cfg.window.name}, coherent_gain=${wm.coherentGain.toStringAsFixed(6)}, ENBW_bins=${wm.enbwBins.toStringAsFixed(3)}, bin_width=${binWidth.toStringAsFixed(3)}Hz');
+    final modeStr = (cfg.displayMode == DisplayMode.psdPrecise) ? 'PSD_per_Hz' : 'Spectroid_per_bin';
+    debugPrint('Mode=$modeStr, decim=$_decimM, fs_eff=$_effectiveFs, hpf=${cfg.lowFreqHpf.name}, hz_per_bin_at_DC=${binWidth.toStringAsFixed(3)}');
+  }
       
   // Use effective sample rate (post-decimation) for frequency bin width
   final binHz = _effectiveFs / cfg.fftSize;
@@ -335,7 +360,9 @@ class SpectroidEngine {
         peakFreq = _fcEma;
         // Convert amplitude peak to power dB for consistency (square the amplitude)
         peakDb = 10 * math.log(vPeak * vPeak + 1e-20) / math.ln10;
-        debugPrint('SpectroidEngine: Peak detected at ${peakFreq.toStringAsFixed(1)} Hz, ${peakDb.toStringAsFixed(1)} dB (power)');
+        if (kDspVerboseLogs) {
+          debugPrint('SpectroidEngine: Peak detected at ${peakFreq.toStringAsFixed(1)} Hz, ${peakDb.toStringAsFixed(1)} dB (power)');
+        }
       }
 
     // Create a working copy for visual pipeline (decimation + smoothing)
@@ -390,7 +417,7 @@ class SpectroidEngine {
       }
 
       // Debug: verify spectrum metrics and low-band stats (0-100 Hz)
-      if (mag.isNotEmpty) {
+      if (kDspVerboseLogs && mag.isNotEmpty) {
         final int m = math.min(10, mag.length);
         double s = 0.0;
         for (int i = 0; i < m; i++) {
@@ -426,7 +453,8 @@ class SpectroidEngine {
       List<PeakInfo> debugPeaks = [];
       double predictedF0 = 0.0;
       String lockReason = "";
-      double currentWindow = 60.0;
+  double currentWindow = 60.0;
+  double localNoiseFloorDb = 0.0;
       // Hybrid Option C: YIN + Harmonic + Fusion
       double f0Yin = 0.0, confYin = 0.0;
       double f0Harm = 0.0, confHarm = 0.0;
@@ -463,7 +491,7 @@ class SpectroidEngine {
           f0Yin = (yr.f0.isFinite && yr.f0 > 15 && yr.f0 < 12000) ? yr.f0 : 0.0;
           confYin = yr.confidence.clamp(0.0, 1.0);
           
-          if (noiseFloorDb < -50.0 && f0Yin > 0) {
+          if (kDspVerboseLogs && noiseFloorDb < -50.0 && f0Yin > 0) {
             debugPrint('YIN ADAPTIVE: noiseFloor=${noiseFloorDb.toStringAsFixed(1)}dB, threshold=${adaptiveThreshold.toStringAsFixed(3)}, f0=${f0Yin.toStringAsFixed(1)}Hz');
           }
         }
@@ -482,7 +510,9 @@ class SpectroidEngine {
           adaptiveMaxHarmonics = 6;
           adaptiveTolCents = 55.0;  // Tolérance accrue
           adaptiveWeightDecay = 0.50; // Moins de decay = plus de poids sur harmoniques
-          debugPrint('HARMONIC ADAPTIVE: maxH=6, tol=55.0cents, decay=0.50 for ${peakDb.toStringAsFixed(1)}dB');
+          if (kDspVerboseLogs) {
+            debugPrint('HARMONIC ADAPTIVE: maxH=6, tol=55.0cents, decay=0.50 for ${peakDb.toStringAsFixed(1)}dB');
+          }
         } else {
           // Signaux normaux : paramètres conservateurs
           adaptiveMaxHarmonics = 4;
@@ -516,7 +546,9 @@ class SpectroidEngine {
         }
         
         if (suppressHarmonic) {
-          debugPrint('HARMONIC SILENCE FILTER: Suppressing Harm=${hres.f0.toStringAsFixed(1)}Hz@${(hres.confidence*100).toStringAsFixed(0)}% (Peak=${peakDb.toStringAsFixed(1)}dB, YIN=${f0Yin.toStringAsFixed(1)}Hz)');
+          if (kDspVerboseLogs) {
+            debugPrint('HARMONIC SILENCE FILTER: Suppressing Harm=${hres.f0.toStringAsFixed(1)}Hz@${(hres.confidence*100).toStringAsFixed(0)}% (Peak=${peakDb.toStringAsFixed(1)}dB, YIN=${f0Yin.toStringAsFixed(1)}Hz)');
+          }
           f0Harm = 0.0;
           confHarm = 0.0;
         }
@@ -529,7 +561,7 @@ class SpectroidEngine {
           confFused = fused.confidence.clamp(0.0, 1.0);
           
           // Debug fusion logic pour comprendre l'impact des poids
-          if (f0Yin > 0 && f0Harm > 0 && (f0Yin - f0Harm).abs() > 10.0) {
+          if (kDspVerboseLogs && f0Yin > 0 && f0Harm > 0 && (f0Yin - f0Harm).abs() > 10.0) {
             final expectedWeighted = (f0Yin * confYin * 0.75 + f0Harm * confHarm * 0.25) / (confYin * 0.75 + confHarm * 0.25 + 1e-12);
             final ratio = f0Harm / f0Yin;
             final isOctave = ratio > 1.8 && ratio < 2.2;
@@ -559,12 +591,52 @@ class SpectroidEngine {
         if (f0Yin > 0) _lastValidYin = f0Yin;
         if (f0Harm > 0) _lastValidHarm = f0Harm;
         
+        // Compute a local noise floor around predicted or peak f0 band in spectrumDb
+        if (_dominantTracker != null) {
+          // pick center around predictedF0 (if any) else the strongest peak from spectrumDb
+          double centerHz;
+          if (predictedF0 > 0) {
+            centerHz = predictedF0;
+          } else if (f0Yin > 0) {
+            centerHz = f0Yin;
+          } else if (f0Harm > 0) {
+            centerHz = f0Harm;
+          } else {
+            // fallback: use display peakFreq
+            centerHz = peakFreq > 0 ? peakFreq : (cfg.pitchFMin + cfg.pitchFMax) * 0.5;
+          }
+          final int centerBin = (centerHz / binWidth).round().clamp(1, spectrumDb.length - 2);
+          final int span = (8).clamp(3, spectrumDb.length - 2); // ±8 bins ~ modest bandwidth
+          final vals = <double>[];
+          for (int b = math.max(1, centerBin - span); b <= math.min(spectrumDb.length - 2, centerBin + span); b++) {
+            // Skip the immediate 3-bin neighborhood to avoid the peak
+            if ((b - centerBin).abs() <= 3) continue;
+            vals.add(spectrumDb[b]);
+          }
+          if (vals.isNotEmpty) {
+            vals.sort();
+            localNoiseFloorDb = vals[vals.length ~/ 2];
+          }
+        }
+
+        // Anti-octave pre-correction for Harm hint based on spectrum evidence
+        if (f0Harm > 0) {
+          final corrected = _correctHarmonicHintOctave(f0Harm, spectrumDb, binWidth.toDouble());
+          if ((corrected - f0Harm).abs() > 0.5) {
+            if (kDspVerboseLogs) {
+              debugPrint('HARM OCTAVE CORRECTION: ${f0Harm.toStringAsFixed(1)} -> ${corrected.toStringAsFixed(1)}');
+            }
+            f0Harm = corrected;
+          }
+        }
+
         final result = _dominantTracker!.update(
           spectrumDb: spectrumDb,
           binWidth: binWidth.toDouble(),
           frameDurationMs: frameMs,
           yinHint: f0Yin > 0 ? f0Yin : _lastValidYin, // Utilise dernière valeur si YIN s'arrête
           harmonicHint: f0Harm > 0 ? f0Harm : _lastValidHarm, // Utilise dernière valeur si Harm s'arrête
+          localNoiseFloorDb: localNoiseFloorDb,
         );
         
         // Safety bounds pour DominantTracker (plus tolérant pour signaux faibles)
@@ -595,6 +667,7 @@ class SpectroidEngine {
         predictedF0,
         lockReason,
         currentWindow,
+        localNoiseFloorDb,
       ));
     });
   }
@@ -644,9 +717,48 @@ class SpectroidEngine {
   Future<void> _configureUnprocessedAudio() async {
     // Platform-specific configuration for UNPROCESSED audio source
     // This is a placeholder - actual implementation would depend on platform channels
-    debugPrint('Configuring UNPROCESSED audio source');
+    if (kDspVerboseLogs) {
+      debugPrint('Configuring UNPROCESSED audio source');
+    }
     // Throw exception if not supported to trigger fallback
     // throw UnsupportedError('UNPROCESSED source not available on this device');
+  }
+
+  // --- Harm hint anti-octave helper logic ---
+  double _correctHarmonicHintOctave(double f, Float32List spectrumDb, double binWidth) {
+    if (!(f.isFinite) || f <= 0) return f;
+    double getDbAt(double freq) {
+      if (!freq.isFinite || freq <= 0) return -120.0;
+      final bin = freq / binWidth;
+      final lo = bin.floor();
+      final hi = bin.ceil();
+      if (lo < 1 || hi >= spectrumDb.length - 1) return -120.0;
+      double maxDb = -120.0;
+      for (int b = lo; b <= hi; b++) {
+        if ((b - bin).abs() <= 0.4) {
+          maxDb = math.max(maxDb, spectrumDb[b]);
+        }
+      }
+      return maxDb;
+    }
+
+    final dbF = getDbAt(f);
+    // Try /3 first (common when 3rd harmonic dominates):
+    final f3 = f / 3.0;
+    final dbF3 = getDbAt(f3);
+    final db2F3 = getDbAt(2 * f3); // ~ 2/3 f
+    // Criteria: sub at f/3 present and its 2nd harmonic (~2f/3) also present
+    if (dbF3 > -110.0 && (dbF - dbF3) <= 10.0 && (dbF - db2F3) <= 12.0) {
+      return f3;
+    }
+    // Try /2 if /3 didn't trigger
+    final f2 = f / 2.0;
+    final dbF2 = getDbAt(f2);
+    final db3F2 = getDbAt(1.5 * f); // 3*(f/2) = 1.5f
+    if (dbF2 > -110.0 && (dbF - dbF2) <= 8.0 && (dbF - db3F2) <= 14.0) {
+      return f2;
+    }
+    return f;
   }
 
   Future<void> _disableAudioEffects() async {
@@ -666,10 +778,13 @@ class SpectroidEngine {
         aecEnabled: false,
         deviceInfo: 'Effects disabled via RecordConfig',
       );
-      
-      debugPrint('Audio effects disabled: AGC=${_audioStatus.agcDisabled}, NS=${_audioStatus.nsDisabled}, AEC=${_audioStatus.aecDisabled}');
+      if (kDspVerboseLogs) {
+        debugPrint('Audio effects disabled: AGC=${_audioStatus.agcDisabled}, NS=${_audioStatus.nsDisabled}, AEC=${_audioStatus.aecDisabled}');
+      }
     } catch (e) {
-      debugPrint('Failed to disable audio effects: $e');
+      if (kDspVerboseLogs) {
+        debugPrint('Failed to disable audio effects: $e');
+      }
       _audioStatus = _audioStatus.copyWith(
         agcEnabled: true,
         nsEnabled: true,

@@ -52,17 +52,7 @@ class _SpectroidSettingsSheetState extends State<SpectroidSettingsSheet> {
                   ],
                 ),
                 spacing,
-                // Presets
-                Wrap(
-                  spacing: 8,
-                  children: [
-                    _presetChip('Spectre', SpectroidPreset.spectre),
-                    _presetChip('Accordeur', SpectroidPreset.accordeur),
-                    _presetChip('Voix', SpectroidPreset.voix),
-                    _presetChip('Analyse', SpectroidPreset.analyse),
-                    _presetChip('Spectroid', SpectroidPreset.spectroid),
-                  ],
-                ),
+                // Single default configuration (Spectre) - presets removed
                 spacing,
                 const Divider(),
                 spacing,
@@ -431,31 +421,5 @@ class _SpectroidSettingsSheetState extends State<SpectroidSettingsSheet> {
     );
   }
 
-  ChoiceChip _presetChip(String label, SpectroidPreset preset) {
-    return ChoiceChip(
-      label: Text(label),
-      selected: _cfg.preset == preset,
-      onSelected: (_) {
-        setState(() {
-          switch (preset) {
-            case SpectroidPreset.spectre:
-              _cfg = SpectroidConfig.presetSpectre();
-              break;
-            case SpectroidPreset.accordeur:
-              _cfg = SpectroidConfig.presetAccordeur();
-              break;
-            case SpectroidPreset.voix:
-              _cfg = SpectroidConfig.presetVoix();
-              break;
-            case SpectroidPreset.analyse:
-              _cfg = SpectroidConfig.presetAnalyse();
-              break;
-            case SpectroidPreset.spectroid:
-              _cfg = SpectroidConfig.presetSpectroid();
-              break;
-          }
-        });
-      },
-    );
-  }
+  // Presets removed — single default configuration used.
 }

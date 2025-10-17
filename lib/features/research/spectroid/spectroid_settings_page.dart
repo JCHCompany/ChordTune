@@ -42,17 +42,7 @@ class _SpectroidSettingsPageState extends State<SpectroidSettingsPage> {
       body: ListView(
         padding: const EdgeInsets.all(16.0),
         children: [
-          // Presets
-          Wrap(
-            spacing: 8,
-            children: [
-              _presetChip('Spectre', SpectroidPreset.spectre),
-              _presetChip('Accordeur', SpectroidPreset.accordeur),
-              _presetChip('Voix', SpectroidPreset.voix),
-              _presetChip('Analyse', SpectroidPreset.analyse),
-              _presetChip('Spectroid', SpectroidPreset.spectroid),
-            ],
-          ),
+          // Single default configuration (Spectre) - presets removed
           spacing,
           const Divider(),
           spacing,
@@ -62,9 +52,9 @@ class _SpectroidSettingsPageState extends State<SpectroidSettingsPage> {
             value: _cfg.enablePitch,
             onChanged: (v) => setState(() => _cfg = _cfg.copyWith(enablePitch: v)),
           ),
-          if (_cfg.enablePitch) ...[
-            Row(children:[const SizedBox(width:160, child: Text('f0 min (Hz)')), Expanded(child: Slider(min:20,max:200,value:_cfg.pitchFMin.clamp(20,200), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(pitchFMin:v))))]),
-            Row(children:[const SizedBox(width:160, child: Text('f0 max (Hz)')), Expanded(child: Slider(min:1000,max:8000,value:_cfg.pitchFMax.clamp(1000,8000), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(pitchFMax:v))))]),
+            if (_cfg.enablePitch) ...[
+            Row(children:[const SizedBox(width:160, child: Text('f0 min (Hz)')), Expanded(child: Slider(min:20,max:200,value:_cfg.pitchFMin.clamp(20,200), label: _cfg.pitchFMin.toStringAsFixed(0), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(pitchFMin:v))))]),
+            Row(children:[const SizedBox(width:160, child: Text('f0 max (Hz)')), Expanded(child: Slider(min:1000,max:8000,value:_cfg.pitchFMax.clamp(1000,8000), label: _cfg.pitchFMax.toStringAsFixed(0), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(pitchFMax:v))))]),
             Row(children:[const SizedBox(width:160, child: Text('Bins / octave')), Expanded(child: Slider(min:12,max:60,divisions:48,value:_cfg.pitchBinsPerOctave.toDouble(), label:_cfg.pitchBinsPerOctave.toString(), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(pitchBinsPerOctave:v.round()))))]),
             Row(children:[const SizedBox(width:160, child: Text('YIN fenêtre')), Expanded(child: Slider(min:512,max:8192,divisions:15,value:_cfg.yinWindow.toDouble().clamp(512,8192), label:_cfg.yinWindow.toString(), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(yinWindow:v.round()))))]),
             Row(children:[const SizedBox(width:160, child: Text('YIN hop')), Expanded(child: Slider(min:64,max:1024,divisions:15,value:_cfg.yinHop.toDouble().clamp(64,1024), label:_cfg.yinHop.toString(), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(yinHop:v.round()))))]),
@@ -77,34 +67,37 @@ class _SpectroidSettingsPageState extends State<SpectroidSettingsPage> {
             SwitchListTile(title: const Text('Anti-octave'), value: _cfg.antiOctaveEnabled, onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(antiOctaveEnabled:v))),
             Row(children:[const SizedBox(width:160, child: Text('Seuil subharm.')), Expanded(child: Slider(min:0.05,max:0.6,divisions:55,value:_cfg.antiOctaveSubharmThresh.clamp(0.05,0.6), label:_cfg.antiOctaveSubharmThresh.toStringAsFixed(2), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(antiOctaveSubharmThresh:v))))]),
             const Divider(),
-            const Text('Tracker f0', style: TextStyle(fontSize:14,fontWeight:FontWeight.bold)),
-            Row(children:[const SizedBox(width:160, child: Text('Lock window (cents)')), Expanded(child: Slider(min:5,max:50,divisions:45,value:_cfg.trackerLockWindowCents.clamp(5,50), label:_cfg.trackerLockWindowCents.toStringAsFixed(0), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerLockWindowCents:v))))]),
-            Row(children:[const SizedBox(width:160, child: Text('Lock-in time (ms)')), Expanded(child: Slider(min:500,max:4000,divisions:35,value:_cfg.trackerLockInMs.clamp(500,4000).toDouble(), label:_cfg.trackerLockInMs.toString(), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerLockInMs:v.round()))))]),
+            const Text('Tracker f0 (héritage)', style: TextStyle(fontSize:14,fontWeight:FontWeight.bold)),
+            Row(children:[const SizedBox(width:160, child: Text('Fenêtre de capture (cents)')), Expanded(child: Slider(min:5,max:50,divisions:45,value:_cfg.trackerLockWindowCents.clamp(5,50), label:_cfg.trackerLockWindowCents.toStringAsFixed(0), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerLockWindowCents:v))))]),
+            Row(children:[const SizedBox(width:160, child: Text('Temps de verrouillage (ms)')), Expanded(child: Slider(min:500,max:4000,divisions:35,value:_cfg.trackerLockInMs.clamp(500,4000).toDouble(), label:_cfg.trackerLockInMs.toString(), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerLockInMs:v.round()))))]),
             SwitchListTile(title: const Text('Fenêtre adaptative'), value: _cfg.trackerAdaptiveWindow, onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerAdaptiveWindow:v))),
             Row(children:[const SizedBox(width:160, child: Text('W min (cents)')), Expanded(child: Slider(min:20,max:80,divisions:60,value:_cfg.trackerWindowMinCents.clamp(20,80), label:_cfg.trackerWindowMinCents.toStringAsFixed(0), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerWindowMinCents:v))))]),
             Row(children:[const SizedBox(width:160, child: Text('W max (cents)')), Expanded(child: Slider(min:30,max:120,divisions:90,value:_cfg.trackerWindowMaxCents.clamp(30,120), label:_cfg.trackerWindowMaxCents.toStringAsFixed(0), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerWindowMaxCents:v))))]),
-            Row(children:[const SizedBox(width:160, child: Text('Jump LOCKED (cents)')), Expanded(child: Slider(min:20,max:200,divisions:18,value:_cfg.trackerMaxJumpLockedCents.clamp(20,200), label:_cfg.trackerMaxJumpLockedCents.toStringAsFixed(0), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerMaxJumpLockedCents:v))))]),
-            Row(children:[const SizedBox(width:160, child: Text('Jump SEARCH (cents)')), Expanded(child: Slider(min:100,max:800,divisions:14,value:_cfg.trackerMaxJumpSearchCents.clamp(100,800), label:_cfg.trackerMaxJumpSearchCents.toStringAsFixed(0), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerMaxJumpSearchCents:v))))]),
-            Row(children:[const SizedBox(width:160, child: Text('Hold-in (ms)')), Expanded(child: Slider(min:20,max:400,divisions:38,value:_cfg.trackerHoldInMs.clamp(20,400).toDouble(), label:_cfg.trackerHoldInMs.toString(), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerHoldInMs:v.round()))))]),
-            Row(children:[const SizedBox(width:160, child: Text('Hold-out (ms)')), Expanded(child: Slider(min:50,max:800,divisions:30,value:_cfg.trackerHoldOutMs.clamp(50,800).toDouble(), label:_cfg.trackerHoldOutMs.toString(), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerHoldOutMs:v.round()))))]),
+            Row(children:[const SizedBox(width:160, child: Text('Saut max LOCKED (cents)')), Expanded(child: Slider(min:20,max:200,divisions:18,value:_cfg.trackerMaxJumpLockedCents.clamp(20,200), label:_cfg.trackerMaxJumpLockedCents.toStringAsFixed(0), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerMaxJumpLockedCents:v))))]),
+            Row(children:[const SizedBox(width:160, child: Text('Saut max SEARCH (cents)')), Expanded(child: Slider(min:100,max:800,divisions:14,value:_cfg.trackerMaxJumpSearchCents.clamp(100,800), label:_cfg.trackerMaxJumpSearchCents.toStringAsFixed(0), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerMaxJumpSearchCents:v))))]),
+            Row(children:[const SizedBox(width:160, child: Text('Temps de lock (Hold‑in, ms)')), Expanded(child: Slider(min:20,max:400,divisions:38,value:_cfg.trackerHoldInMs.clamp(20,400).toDouble(), label:_cfg.trackerHoldInMs.toString(), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerHoldInMs:v.round()))))]),
+            Row(children:[const SizedBox(width:160, child: Text('Temps sans pic (Hold‑out, ms)')), Expanded(child: Slider(min:50,max:800,divisions:30,value:_cfg.trackerHoldOutMs.clamp(50,800).toDouble(), label:_cfg.trackerHoldOutMs.toString(), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerHoldOutMs:v.round()))))]),
             Row(children:[const SizedBox(width:160, child: Text('Lissage (ms)')), Expanded(child: Slider(min:0,max:200,divisions:20,value:_cfg.trackerSmoothMs.clamp(0,200).toDouble(), label:_cfg.trackerSmoothMs.toString(), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerSmoothMs:v.round()))))]),
             Row(children:[const SizedBox(width:160, child: Text('SNR on (dB)')), Expanded(child: Slider(min:0,max:20,divisions:20,value:_cfg.trackerSnrOn.clamp(0,20), label:_cfg.trackerSnrOn.toStringAsFixed(1), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerSnrOn:v))))]),
             Row(children:[const SizedBox(width:160, child: Text('SNR off (dB)')), Expanded(child: Slider(min:0,max:20,divisions:20,value:_cfg.trackerSnrOff.clamp(0,20), label:_cfg.trackerSnrOff.toStringAsFixed(1), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerSnrOff:v))))]),
-            Row(children:[const SizedBox(width:160, child: Text('Gating dBFS (in-band)')), Expanded(child: Slider(min:-60,max:0,divisions:60,value:_cfg.trackerGatingDbfs.clamp(-60,0), label:_cfg.trackerGatingDbfs.toStringAsFixed(0), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerGatingDbfs:v))))]),
+            Row(children:[const SizedBox(width:160, child: Text('Gating dBFS (in-band)')), Expanded(child: Slider(min:-140,max:0,divisions:140,value:_cfg.trackerGatingDbfs.clamp(-140,0), label:_cfg.trackerGatingDbfs.toStringAsFixed(0), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerGatingDbfs:v))))]),
             Row(children:[const SizedBox(width:160, child: Text('Competitor margin (dB)')), Expanded(child: Slider(min:0,max:12,divisions:12,value:_cfg.trackerCompetitorMarginDb.clamp(0,12), label:_cfg.trackerCompetitorMarginDb.toStringAsFixed(0), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerCompetitorMarginDb:v))))]),
             SwitchListTile(title: const Text('Activer co-décroissance'), value: _cfg.trackerCoDecayEnabled, onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(trackerCoDecayEnabled:v))),
             SwitchListTile(title: const Text('Afficher état tracker'), value: _cfg.showTrackerState, onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(showTrackerState:v))),
             Row(children:[const SizedBox(width:160, child: Text('Overlay ± cents')), Expanded(child: Slider(min:0,max:100,divisions:20,value:_cfg.overlayCentsBand.clamp(0,100), label:_cfg.overlayCentsBand.toStringAsFixed(0), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(overlayCentsBand:v))))]),
             spacing,
-            const Text('Dominant Peak Tracker', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            Row(children:[const SizedBox(width:160, child: Text('Lock threshold (dB)')), Expanded(child: Slider(min:3,max:15,divisions:12,value:_cfg.dominantLockThresholdDb.clamp(3,15), label:_cfg.dominantLockThresholdDb.toStringAsFixed(1), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantLockThresholdDb:v))))]),
-            Row(children:[const SizedBox(width:160, child: Text('Unlock threshold (dB)')), Expanded(child: Slider(min:0,max:10,divisions:10,value:_cfg.dominantUnlockThresholdDb.clamp(0,10), label:_cfg.dominantUnlockThresholdDb.toStringAsFixed(1), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantUnlockThresholdDb:v))))]),
-            Row(children:[const SizedBox(width:160, child: Text('Hold-in (ms)')), Expanded(child: Slider(min:50,max:500,divisions:18,value:_cfg.dominantHoldInMs.clamp(50,500).toDouble(), label:_cfg.dominantHoldInMs.toString(), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantHoldInMs:v.round()))))]),
-            Row(children:[const SizedBox(width:160, child: Text('Hold-out (ms)')), Expanded(child: Slider(min:100,max:1000,divisions:18,value:_cfg.dominantHoldOutMs.clamp(100,1000).toDouble(), label:_cfg.dominantHoldOutMs.toString(), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantHoldOutMs:v.round()))))]),
-            Row(children:[const SizedBox(width:160, child: Text('Lock window (cents)')), Expanded(child: Slider(min:30,max:120,divisions:18,value:_cfg.dominantLockWindowCents.clamp(30,120), label:_cfg.dominantLockWindowCents.toStringAsFixed(0), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantLockWindowCents:v))))]),
-            Row(children:[const SizedBox(width:160, child: Text('Max jump (cents/s)')), Expanded(child: Slider(min:20,max:200,divisions:18,value:_cfg.dominantMaxJumpCentsPerS.clamp(20,200), label:_cfg.dominantMaxJumpCentsPerS.toStringAsFixed(0), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantMaxJumpCentsPerS:v))))]),
-            Row(children:[const SizedBox(width:160, child: Text('Prominence (dB)')), Expanded(child: Slider(min:2,max:10,divisions:8,value:_cfg.dominantPeakProminenceDb.clamp(2,10), label:_cfg.dominantPeakProminenceDb.toStringAsFixed(1), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantPeakProminenceDb:v))))]),
-            Row(children:[const SizedBox(width:160, child: Text('Neighbor span (bins)')), Expanded(child: Slider(min:10,max:50,divisions:8,value:_cfg.dominantNeighborSpanBins.clamp(10,50).toDouble(), label:_cfg.dominantNeighborSpanBins.toString(), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantNeighborSpanBins:v.round()))))]),
+            const Text('Dominant Peak Tracker (principal)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            Row(children:[const SizedBox(width:160, child: Text('Seuil de lock SNR (dB)')), Expanded(child: Slider(min:3,max:40,divisions:37,value:_cfg.dominantLockThresholdDb.clamp(3,40), label:_cfg.dominantLockThresholdDb.toStringAsFixed(1), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantLockThresholdDb:v))))]),
+            Row(children:[const SizedBox(width:160, child: Text('Seuil de délock SNR (dB)')), Expanded(child: Slider(min:0,max:40,divisions:40,value:_cfg.dominantUnlockThresholdDb.clamp(0,40), label:_cfg.dominantUnlockThresholdDb.toStringAsFixed(1), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantUnlockThresholdDb:v))))]),
+            Row(children:[const SizedBox(width:160, child: Text('Temps de lock (Hold‑in, ms)')), Expanded(child: Slider(min:50,max:500,divisions:18,value:_cfg.dominantHoldInMs.clamp(50,500).toDouble(), label:_cfg.dominantHoldInMs.toString(), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantHoldInMs:v.round()))))]),
+            Row(children:[const SizedBox(width:200, child: Text('Temps sans pic (Hold‑out, ms)')),
+              Expanded(child: Slider(min:100,max:1500,divisions:28,value:_cfg.dominantHoldOutMs.clamp(100,1500).toDouble(), label:'${_cfg.dominantHoldOutMs} (délock forcé ≈ ${_cfg.dominantHoldOutMs*2} ms)', onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantHoldOutMs:v.round()))))]),
+            Row(children:[const SizedBox(width:160, child: Text('Fenêtre de capture (cents)')), Expanded(child: Slider(min:30,max:120,divisions:18,value:_cfg.dominantLockWindowCents.clamp(30,120), label:_cfg.dominantLockWindowCents.toStringAsFixed(0), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantLockWindowCents:v))))]),
+            Row(children:[const SizedBox(width:160, child: Text('Vitesse max (cents/s)')), Expanded(child: Slider(min:20,max:200,divisions:18,value:_cfg.dominantMaxJumpCentsPerS.clamp(20,200), label:_cfg.dominantMaxJumpCentsPerS.toStringAsFixed(0), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantMaxJumpCentsPerS:v))))]),
+            Row(children:[const SizedBox(width:160, child: Text('Prominence minimale (dB)')), Expanded(child: Slider(min:2,max:10,divisions:8,value:_cfg.dominantPeakProminenceDb.clamp(2,10), label:_cfg.dominantPeakProminenceDb.toStringAsFixed(1), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantPeakProminenceDb:v))))]),
+            Row(children:[const SizedBox(width:200, child: Text('Portée médiane locale (bins)')), Expanded(child: Slider(min:10,max:50,divisions:8,value:_cfg.dominantNeighborSpanBins.clamp(10,50).toDouble(), label:_cfg.dominantNeighborSpanBins.toString(), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantNeighborSpanBins:v.round()))))]),
+            Row(children:[const SizedBox(width:200, child: Text('Marge concurrent (base, dB)')), Expanded(child: Slider(min:0,max:16,divisions:16,value:_cfg.dominantCompetitorMarginBaseDb.clamp(0,16), label:_cfg.dominantCompetitorMarginBaseDb.toStringAsFixed(1), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantCompetitorMarginBaseDb:v))))]),
+            Row(children:[const SizedBox(width:200, child: Text('Marge adaptative (dB / dB de déficit)')), Expanded(child: Slider(min:0.0,max:1.0,divisions:20,value:_cfg.dominantCompetitorMarginAdaptiveSlope.clamp(0.0,1.0), label:_cfg.dominantCompetitorMarginAdaptiveSlope.toStringAsFixed(2), onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantCompetitorMarginAdaptiveSlope:v))))]),
             SwitchListTile(title: const Text('Rescue fondamentale (/2, /3)'), value: _cfg.dominantRescueEnabled, onChanged:(v)=> setState(()=> _cfg=_cfg.copyWith(dominantRescueEnabled:v))),
           ],
           // Sample rate
@@ -532,31 +525,5 @@ class _SpectroidSettingsPageState extends State<SpectroidSettingsPage> {
     );
   }
 
-  ChoiceChip _presetChip(String label, SpectroidPreset preset) {
-    return ChoiceChip(
-      label: Text(label),
-      selected: _cfg.preset == preset,
-      onSelected: (_) {
-        setState(() {
-          switch (preset) {
-            case SpectroidPreset.spectre:
-              _cfg = SpectroidConfig.presetSpectre();
-              break;
-            case SpectroidPreset.accordeur:
-              _cfg = SpectroidConfig.presetAccordeur();
-              break;
-            case SpectroidPreset.voix:
-              _cfg = SpectroidConfig.presetVoix();
-              break;
-            case SpectroidPreset.analyse:
-              _cfg = SpectroidConfig.presetAnalyse();
-              break;
-            case SpectroidPreset.spectroid:
-              _cfg = SpectroidConfig.presetSpectroid();
-              break;
-          }
-        });
-      },
-    );
-  }
+  // Presets removed — single default configuration used.
 }

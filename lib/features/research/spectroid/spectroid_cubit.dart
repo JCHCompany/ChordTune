@@ -147,7 +147,7 @@ class SpectroidCubit extends Cubit<SpectroidState> {
   }
 
   Future<void> reconfigure(SpectroidConfig cfg) async {
-    debugPrint('SpectroidCubit: Reconfiguring with preset=${cfg.preset.name}, spectroidMode=${cfg.spectroidMode}, audioSource=${cfg.audioSource.name}');
+  debugPrint('SpectroidCubit: Reconfiguring (spectre default), spectroidMode=${cfg.spectroidMode}, audioSource=${cfg.audioSource.name}');
     
     // Apply new configuration; restart engine if running
     final wasCapturing = state.capturing;
@@ -191,25 +191,8 @@ class SpectroidCubit extends Cubit<SpectroidState> {
   }
 
   Future<void> setPreset(SpectroidPreset p) async {
-    SpectroidConfig next;
-    switch (p) {
-      case SpectroidPreset.spectre:
-        next = SpectroidConfig.presetSpectre();
-        break;
-      case SpectroidPreset.accordeur:
-        next = SpectroidConfig.presetAccordeur();
-        break;
-      case SpectroidPreset.voix:
-        next = SpectroidConfig.presetVoix();
-        break;
-      case SpectroidPreset.analyse:
-        next = SpectroidConfig.presetAnalyse();
-        break;
-      case SpectroidPreset.spectroid:
-        next = SpectroidConfig.presetSpectroid();
-        break;
-    }
-    await reconfigure(next);
+    // Presets removed; keep spectre as the only option
+    await reconfigure(SpectroidConfig.presetSpectre());
   }
 
   Future<void> setDisplayBandMax(int hz) async => await reconfigure(state.config.copyWith(displayBandMax: hz));

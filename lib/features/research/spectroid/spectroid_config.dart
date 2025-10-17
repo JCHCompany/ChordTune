@@ -1,6 +1,6 @@
 import 'package:equatable/equatable.dart';
 
-enum SpectroidPreset { spectre, accordeur, voix, analyse, spectroid }
+enum SpectroidPreset { spectre }
 
 enum SpectroidWindow { hann, hamming, blackmanHarris, kaiser, flattop }
 
@@ -93,6 +93,13 @@ class SpectroidConfig extends Equatable {
   final bool dominantRescueEnabled; // missing fundamental rescue
   final double dominantPeakProminenceDb; // peak prominence threshold
   final int dominantNeighborSpanBins; // neighbor span for prominence
+  // Competitor margin control (dominant tracker): base dB and adaptive slope vs low SNR
+  final double
+      dominantCompetitorMarginBaseDb; // base dB margin vs competitor to unlock (replaces fixed +8 dB)
+  final double
+      dominantCompetitorMarginAdaptiveSlope; // dB per dB shortfall below lock threshold
+  // Locked-state persistence: don't unlock on SNR until below this floor vs local noise
+  final double lockedSnrFloorDb; // e.g. -128 dB
   // Whitening option
   final bool whiteningEnabled;
   // Show tracker state overlay
@@ -171,15 +178,24 @@ class SpectroidConfig extends Equatable {
     this.trackerCompetitorMarginDb = 6.0,
     this.trackerGatingDbfs = -18.0,
     this.trackerCoDecayEnabled = true,
-    this.dominantLockThresholdDb = 3.0, // SIGNAUX FAIBLES: Pour lock à -50dB (was 6.0)
-    this.dominantUnlockThresholdDb = 1.0, // ÉQUILIBRÉ: Responsive mais stable (was -2.0)
+    this.dominantLockThresholdDb =
+        3.0, // SIGNAUX FAIBLES: Pour lock à -50dB (was 6.0)
+    this.dominantUnlockThresholdDb =
+        1.0, // ÉQUILIBRÉ: Responsive mais stable (was -2.0)
     this.dominantHoldInMs = 150, // RESTAURÉ: Timing historique stable (was 80)
-    this.dominantHoldOutMs = 150, // RESTAURÉ: Valeur historique responsive (was 400) 
-    this.dominantLockWindowCents = 60.0, // RESTAURÉ: Fenêtre historique (was 80.0)
-    this.dominantMaxJumpCentsPerS = 80.0, // RESTAURÉ: Vitesse historique stable (was 300.0)
+    this.dominantHoldOutMs =
+        150, // RESTAURÉ: Valeur historique responsive (was 400)
+    this.dominantLockWindowCents =
+        60.0, // RESTAURÉ: Fenêtre historique (was 80.0)
+    this.dominantMaxJumpCentsPerS =
+        80.0, // RESTAURÉ: Vitesse historique stable (was 300.0)
     this.dominantRescueEnabled = true,
-    this.dominantPeakProminenceDb = 4.0, // RESTAURÉ: Valeur historique stable (was 3.0)
+    this.dominantPeakProminenceDb =
+        4.0, // RESTAURÉ: Valeur historique stable (was 3.0)
     this.dominantNeighborSpanBins = 20,
+    this.dominantCompetitorMarginBaseDb = 8.0,
+    this.dominantCompetitorMarginAdaptiveSlope = 0.2,
+    this.lockedSnrFloorDb = -128.0,
     this.whiteningEnabled = false,
     this.showTrackerState = true,
     this.overlayCentsBand = 20.0,
@@ -272,6 +288,9 @@ class SpectroidConfig extends Equatable {
     bool? dominantRescueEnabled,
     double? dominantPeakProminenceDb,
     int? dominantNeighborSpanBins,
+    double? dominantCompetitorMarginBaseDb,
+    double? dominantCompetitorMarginAdaptiveSlope,
+    double? lockedSnrFloorDb,
     bool? whiteningEnabled,
     bool? showTrackerState,
     double? overlayCentsBand,
@@ -351,6 +370,12 @@ class SpectroidConfig extends Equatable {
           dominantPeakProminenceDb ?? this.dominantPeakProminenceDb,
       dominantNeighborSpanBins:
           dominantNeighborSpanBins ?? this.dominantNeighborSpanBins,
+      dominantCompetitorMarginBaseDb:
+          dominantCompetitorMarginBaseDb ?? this.dominantCompetitorMarginBaseDb,
+      dominantCompetitorMarginAdaptiveSlope:
+          dominantCompetitorMarginAdaptiveSlope ??
+              this.dominantCompetitorMarginAdaptiveSlope,
+      lockedSnrFloorDb: lockedSnrFloorDb ?? this.lockedSnrFloorDb,
       whiteningEnabled: whiteningEnabled ?? this.whiteningEnabled,
       showTrackerState: showTrackerState ?? this.showTrackerState,
       overlayCentsBand: overlayCentsBand ?? this.overlayCentsBand,
@@ -378,145 +403,42 @@ class SpectroidConfig extends Equatable {
   static SpectroidConfig presetSpectre() => const SpectroidConfig(
         preset: SpectroidPreset.spectre,
         fsCapture: 48000,
-        resampleTo: null,
-        fftSize: 2048,
-        overlap: 0.75,
+        resampleTo: 16000,
+      fftSize: 1024,
+      // Moderate overlap for smooth UI with ~40-45 ms hop at eff. Fs
+      overlap: 0.50,
         window: SpectroidWindow.hann,
-        emaAlphaAmp: 0.7,
-        emaAlphaFreq: 0.7,
+      // Faster decay for visual spectrum and tracked peak smoothing
+      emaAlphaAmp: 0.5,
+      emaAlphaFreq: 0.6,
         displayBandMax: 20000,
         dcRemove: true,
         spectroidMode: false,
         displayUnit: DisplayUnit.dBHz,
         displayMode: DisplayMode.psdPrecise,
-        firDecimation: 4,
-        decimLevels: 0,
+      // Keep decimation modest to avoid very long windows (slow decay)
+      firDecimation: 1,
+      decimLevels: 2, // 2^2 = 4 => eff. Fs ≈ 12 kHz, window ≈ 85 ms
         lowFreqHpf: LowFreqHighPass.hz1,
         enablePitch: true,
         // CORRECTIONS URGENTES: Éviter lock sans signal + convergence rapide
-        dominantLockThresholdDb: 20.0, // BEAUCOUP plus strict - éviter lock sans signal
-        dominantUnlockThresholdDb: 10.0, // Plus strict aussi pour éviter lock fantôme  
-        dominantHoldInMs: 200, // PLUS DE TEMPS - permet YIN/Harmonic de converger vers fondamental (was 100ms)
-        dominantHoldOutMs: 50,  // TRÈS RAPIDE unlock
+        dominantLockThresholdDb:
+            20.0, // BEAUCOUP plus strict - éviter lock sans signal
+        dominantUnlockThresholdDb:
+            10.0, // Plus strict aussi pour éviter lock fantôme
+        dominantHoldInMs:
+            200, // PLUS DE TEMPS - permet YIN/Harmonic de converger vers fondamental (was 100ms)
+        dominantHoldOutMs: 50, // TRÈS RAPIDE unlock
         dominantLockWindowCents: 80.0, // Fenêtre plus large pour exploration
         dominantMaxJumpCentsPerS: 1000.0, // BEAUCOUP plus rapide - 10x plus
         firSmoothing: false,
-        audioSource: AudioSource.auto,
-        dcFilter: DcFilterType.iir,
-        notchFilter: NotchFilter.none,
-        disableAudioEffects: true,
-      );
-
-  static SpectroidConfig presetAccordeur() => const SpectroidConfig(
-        preset: SpectroidPreset.accordeur,
-        fsCapture: 48000,
-        resampleTo: 16000,
-        fftSize: 1024,
-        overlap: 0.5,
-        window: SpectroidWindow.hann,
-        emaAlphaFreq: 0.7,
-        peakSearchMin: 50,
-        peakSearchMax: 2000,
-        harmonicGuard: true,
-        displayBandMax: 8000,
-        decimation: 0,
-        dcRemove: true,
-        spectroidMode: false,
-        displayUnit: DisplayUnit.dBHz,
-        displayMode: DisplayMode.psdPrecise,
-        firDecimation: 2,
-        decimLevels: 4,
-        lowFreqHpf: LowFreqHighPass.hz1,
-        enablePitch: true,
-        // CORRECTIONS ACCORDEUR: Strict mais rapide
-        dominantLockThresholdDb: 22.0, // TRÈS strict - éviter lock sans signal guitare
-        dominantUnlockThresholdDb: 12.0, // Strict aussi
-        dominantHoldInMs: 250, // PLUS DE TEMPS - permet convergence vers fondamental grave (was 150ms)
-        dominantHoldOutMs: 75,  // TRÈS rapide unlock
-        dominantLockWindowCents: 30.0, // Fenêtre plus petite pour précision
-        dominantMaxJumpCentsPerS: 800.0, // Rapide pour suivi accordage
-        firSmoothing: false,
         audioSource: AudioSource.unprocessed,
         dcFilter: DcFilterType.iir,
-        notchFilter: NotchFilter.none,
+        notchFilter: NotchFilter.hz60,
         disableAudioEffects: true,
       );
 
-  static SpectroidConfig presetVoix() => const SpectroidConfig(
-        preset: SpectroidPreset.voix,
-        fsCapture: 44100,
-        resampleTo: null,
-        fftSize: 2048,
-        overlap: 0.66,
-        window: SpectroidWindow.blackmanHarris,
-        emaAlphaFreq: 0.85,
-        emaAlphaAmp: 0.8,
-        displayBandMax: 20000,
-        dcRemove: true,
-        spectroidMode: false,
-        displayUnit: DisplayUnit.dBHz,
-        displayMode: DisplayMode.psdPrecise,
-        firDecimation: 4,
-        decimLevels: 0,
-        lowFreqHpf: LowFreqHighPass.hz1,
-        enablePitch: true,
-        firSmoothing: false,
-        audioSource: AudioSource.voiceRecognition,
-        dcFilter: DcFilterType.dcBlocker,
-        notchFilter: NotchFilter.none,
-        disableAudioEffects: false,
-      );
-
-  static SpectroidConfig presetAnalyse() => const SpectroidConfig(
-        preset: SpectroidPreset.analyse,
-        fsCapture: 48000,
-        resampleTo: null,
-        fftSize: 8192, // Test large FFT for PSD validation
-        overlap: 0.75,
-        window: SpectroidWindow.flattop,
-        emaAlphaFreq: 0.95,
-        emaAlphaAmp: 0.9,
-        displayBandMax: 20000,
-        dcRemove: true,
-        spectroidMode: false,
-        displayUnit: DisplayUnit.dBHz,
-        displayMode: DisplayMode.psdPrecise,
-        firDecimation: 4,
-        decimLevels: 0,
-        lowFreqHpf: LowFreqHighPass.hz1,
-        enablePitch: true,
-        firSmoothing: false,
-        audioSource: AudioSource.unprocessed,
-        dcFilter: DcFilterType.iir,
-        notchFilter: NotchFilter.hz50,
-        disableAudioEffects: true,
-      );
-
-  static SpectroidConfig presetSpectroid() => const SpectroidConfig(
-        preset: SpectroidPreset.spectroid,
-        requestedSampleRate: '48000',
-        fsCapture: 48000,
-        resampleTo: null,
-        fftSize: 2048,
-        overlap: 0.75,
-        window: SpectroidWindow.hann,
-        peakTracking: false,
-        emaAlphaAmp: 0.15,
-        displayBandMax: 20000,
-        dcRemove: false,
-        spectroidMode: true,
-        displayUnit: DisplayUnit.dBFS,
-        displayMode: DisplayMode.spectroidCompat,
-        firDecimation: 1,
-        decimLevels: 0,
-        lowFreqHpf: LowFreqHighPass.hz1,
-        enablePitch: true,
-        firSmoothing: true,
-        audioSource: AudioSource.unprocessed,
-        dcFilter: DcFilterType.dcBlocker,
-        notchFilter: NotchFilter.none,
-        disableAudioEffects: true,
-      );
+  // Keep only the 'spectre' preset as the single default configuration
 
   @override
   List<Object?> get props => [
@@ -592,6 +514,9 @@ class SpectroidConfig extends Equatable {
         dominantRescueEnabled,
         dominantPeakProminenceDb,
         dominantNeighborSpanBins,
+        dominantCompetitorMarginBaseDb,
+        dominantCompetitorMarginAdaptiveSlope,
+        lockedSnrFloorDb,
         whiteningEnabled,
         showTrackerState,
         overlayCentsBand,

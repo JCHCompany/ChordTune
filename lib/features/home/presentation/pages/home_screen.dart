@@ -31,6 +31,12 @@ class HomeScreen extends StatelessWidget {
               icon: const Icon(Icons.science),
               label: const Text('Accordeur R&D'),
             ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () => context.go('/guided'),
+              icon: const Icon(Icons.light_mode),
+              label: const Text('Accordeur guidé'),
+            ),
           ],
         ),
       ),

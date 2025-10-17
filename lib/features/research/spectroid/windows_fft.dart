@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'spectroid_config.dart';
+// Reuse a compile-time-like flag to gate verbose logs
+const bool kWindowVerboseLogs = false;
 
 Float32List makeWindow(int n, SpectroidWindow type, {double beta = 8.0}) {
   final w = Float32List(n);
@@ -50,7 +52,9 @@ Float32List makeWindow(int n, SpectroidWindow type, {double beta = 8.0}) {
   final coherentGain = sumW / n; // amplitude scale for a full-scale sine at bin
   final U = sumW2 / n;           // average window power (Welch)
   final enbw = U / (coherentGain * coherentGain); // Equivalent Noise BandWidth in bins
-  debugPrint('Window ${type.name}: size=$n, sumW=${sumW.toStringAsFixed(3)}, sumW2=${sumW2.toStringAsFixed(3)}, coherentGain=${coherentGain.toStringAsFixed(6)}, ENBW_bins=${enbw.toStringAsFixed(6)}');
+  if (kWindowVerboseLogs) {
+    debugPrint('Window ${type.name}: size=$n, sumW=${sumW.toStringAsFixed(3)}, sumW2=${sumW2.toStringAsFixed(3)}, coherentGain=${coherentGain.toStringAsFixed(6)}, ENBW_bins=${enbw.toStringAsFixed(6)}');
+  }
   
   return w;
 }
@@ -151,7 +155,9 @@ Float32List computePsdOneSided(
     final double factor = (k == 0) ? 1.0 : 2.0;
     out[k] = (factor * mag2 * invDen).toDouble();
   }
-  debugPrint('Welch PSD: N=$n, sumW=${sumW.toStringAsFixed(3)}, sumW2=${sumW2.toStringAsFixed(3)}, U=${U.toStringAsFixed(6)}');
+  if (kWindowVerboseLogs) {
+    debugPrint('Welch PSD: N=$n, sumW=${sumW.toStringAsFixed(3)}, sumW2=${sumW.toStringAsFixed(3)}, U=${U.toStringAsFixed(6)}');
+  }
   return out;
 }
 
@@ -188,7 +194,9 @@ Float32List computePsdPerHzPrecise(
   out[k] = pBin.toDouble();
   }
 
-  debugPrint('PSD precise: N=$n, Fs=$sampleRate, binWidth=${binWidth.toStringAsFixed(3)}Hz, U=${U.toStringAsExponential(3)}, ENBW_bins=${wm.enbwBins.toStringAsFixed(3)}');
+  if (kWindowVerboseLogs) {
+    debugPrint('PSD precise: N=$n, Fs=$sampleRate, binWidth=${binWidth.toStringAsFixed(3)}Hz, U=${U.toStringAsExponential(3)}, ENBW_bins=${wm.enbwBins.toStringAsFixed(3)}');
+  }
   return out;
 }
 
@@ -247,7 +255,9 @@ Float32List computeIntegratedPowerBands(
     out[band] = (bandPower * bandWidth / (kHigh - kLow)).toDouble();
   }
 
-  debugPrint('Integrated bands: ${out.length} bands, deltaF=${deltaF.toStringAsFixed(2)}Hz, coherentGain=${coherentGain.toStringAsFixed(3)}');
+  if (kWindowVerboseLogs) {
+    debugPrint('Integrated bands: ${out.length} bands, deltaF=${deltaF.toStringAsFixed(2)}Hz, coherentGain=${coherentGain.toStringAsFixed(3)}');
+  }
   return out;
 }
 
@@ -360,8 +370,10 @@ Float32List computeMagnitude(Float32List frame, Float32List window) {
   }
   
   // Debug logging for normalization analysis
-  debugPrint('FFT: windowGain=${windowGain.toStringAsFixed(3)}, scale=2/sum=${(scaleGeneral).toStringAsExponential(3)}, minMag=${minMag.toStringAsExponential(3)}, maxMag=${maxMag.toStringAsExponential(3)}');
-  if (minMag > 0) {
+  if (kWindowVerboseLogs) {
+    debugPrint('FFT: windowGain=${windowGain.toStringAsFixed(3)}, scale=2/sum=${(scaleGeneral).toStringAsExponential(3)}, minMag=${minMag.toStringAsExponential(3)}, maxMag=${maxMag.toStringAsExponential(3)}');
+  }
+  if (kWindowVerboseLogs && minMag > 0) {
     // Convert to power dB (10*log10) for consistency with PSD dB/Hz
     final minDb = 10 * math.log(minMag * minMag + 1e-20) / math.ln10;
     final maxDb = 10 * math.log(maxMag * maxMag + 1e-20) / math.ln10;

@@ -29,6 +29,8 @@ class DominantPitchResult {
   final double predictedF0;
   final String lockReason; // why locked/unlocked
   final double currentWindow; // current lock window in cents
+  // Optional: local noise floor for debug
+  final double localNoiseFloorDb;
   
   const DominantPitchResult({
     required this.f0,
@@ -38,6 +40,7 @@ class DominantPitchResult {
     required this.predictedF0,
     required this.lockReason,
     required this.currentWindow,
+    this.localNoiseFloorDb = 0.0,
   });
 }
 
@@ -58,6 +61,24 @@ class DominantPitchTracker {
   final bool rescueEnabled;
   final double peakProminenceDb;
   final int neighborSpanBins;
+  // Competitor margin control
+  double competitorMarginBaseDb = 8.0; // default equivalent to legacy
+  double competitorMarginAdaptiveSlope = 0.2; // dB per dB SNR shortfall
+  // Locked-state persistence: do not unlock until SNR is below this relative floor
+  double lockedSnrFloorDb = -128.0;
+  // Last known local noise floor (for debug propagation)
+  double _lastLocalNoiseFloorDb = 0.0;
+  
+  // Transient guard (broadband clap/tap protection)
+  double transientThresholdDb = 6.0; // average band dB jump to trigger freeze
+  int transientFreezeDurationMs = 250; // freeze unlock for this duration
+  int _transientGuardMs = 0; // remaining freeze time
+  double _lastBandAvgDb = -120.0; // last average dB over band
+  
+  // Averaged f0 anchor (decide unlock using ~0.5s average)
+  double _avgF0Hz = 0.0;
+  double avgF0TimeConstantS = 0.5; // ~0.5s EMA
+  double anchorWindowCents = 90.0; // consider near-anchor within this band
   
   // Alpha-beta filter parameters - BEAUCOUP plus agressif pour vitesse
   final double alphaPos = 0.9;  // Convergence très rapide
@@ -98,8 +119,24 @@ class DominantPitchTracker {
     required int frameDurationMs,
     double? yinHint,     // Indice de YIN pour éviter octave errors
     double? harmonicHint, // Indice d'harmonic salience
+    double? localNoiseFloorDb, // Optional: local noise floor around band
   }) {
     final deltaTimeS = frameDurationMs / 1000.0;
+    if (localNoiseFloorDb != null) {
+      _lastLocalNoiseFloorDb = localNoiseFloorDb;
+    }
+    
+    // Compute average dB over analysis band to detect broadband transients
+    final bandAvgDb = _computeBandAvgDb(spectrumDb, binWidth);
+    if (_lastBandAvgDb > -200.0) {
+      final jump = bandAvgDb - _lastBandAvgDb;
+      if (jump >= transientThresholdDb) {
+        _transientGuardMs = transientFreezeDurationMs; // activate freeze
+      } else {
+        _transientGuardMs = math.max(0, _transientGuardMs - frameDurationMs);
+      }
+    }
+    _lastBandAvgDb = bandAvgDb;
     
     // Vérification de cohérence d'état au démarrage
     if (_currentF0 <= 0.0 && _state == DominantTrackerState.locked) {
@@ -265,10 +302,17 @@ class DominantPitchTracker {
         predictedF0: 0.0,
         lockReason: _lastLockReason,
         currentWindow: _currentWindow,
+        localNoiseFloorDb: _lastLocalNoiseFloorDb,
       );
     }
     
-    final bestPeak = peaks.first;
+  // peaks are sorted by totalScore (SNR + harmonicScore + hintBias)
+  // However, during SEARCH we want to prioritize clear energy evidence.
+  // If the top-by-score is low-SNR (often a hypothesized fundamental),
+  // fall back to the highest-SNR candidate to avoid missing obvious peaks.
+  final bestByScore = peaks.first;
+  final bestBySnr = peaks.reduce((a, b) => a.snr >= b.snr ? a : b);
+  PeakInfo bestPeak = bestByScore;
     
     // Validation adaptative avant tentative de lock
     double effectiveProminenceForLock = peakProminenceDb;
@@ -281,10 +325,23 @@ class DominantPitchTracker {
       }
     }
     
-    final isPeakValid = bestPeak.snr >= lockThresholdDb && 
+    bool isPeakValid = bestPeak.snr >= lockThresholdDb && 
                        bestPeak.freq >= fMin && 
                        bestPeak.freq <= fMax &&
                        bestPeak.prominence >= effectiveProminenceForLock;
+    // If the top-by-score fails only because of SNR, try the highest-SNR candidate
+    if (!isPeakValid) {
+      final scoreFailsSNR = bestPeak.snr < lockThresholdDb;
+      final snrCandidateValid = bestBySnr.snr >= lockThresholdDb &&
+          bestBySnr.freq >= fMin && bestBySnr.freq <= fMax &&
+          bestBySnr.prominence >= effectiveProminenceForLock;
+      if (scoreFailsSNR && snrCandidateValid) {
+        bestPeak = bestBySnr;
+        isPeakValid = true;
+        _lastLockReason =
+            "SEARCH: switched to highest-SNR candidate ${bestPeak.freq.toStringAsFixed(1)} Hz (SNR ${bestPeak.snr.toStringAsFixed(1)} dB)";
+      }
+    }
     
     if (isPeakValid) {
       // Vérification de consistance : si le pic change trop, restart
@@ -333,6 +390,7 @@ class DominantPitchTracker {
       predictedF0: _currentF0,
       lockReason: _lastLockReason,
       currentWindow: _currentWindow,
+      localNoiseFloorDb: _lastLocalNoiseFloorDb,
     );
   }
   
@@ -345,6 +403,12 @@ class DominantPitchTracker {
     double? yinHint,
     double? harmonicHint,
   ) {
+    // Update averaged f0 anchor (EMA ~0.5s)
+    if (_currentF0 > 0) {
+      final k = (deltaTimeS / avgF0TimeConstantS).clamp(0.0, 1.0);
+      _avgF0Hz = (_avgF0Hz == 0.0) ? _currentF0 : _avgF0Hz + ( _currentF0 - _avgF0Hz) * k;
+    }
+    
     // NOUVELLE LOGIQUE: Vérifier si les hints YIN/Harmonic suggèrent une correction d'octave
     if (yinHint != null && yinHint > 0 && harmonicHint != null && harmonicHint > 0) {
       final avgHint = (yinHint + harmonicHint) / 2.0;
@@ -371,6 +435,7 @@ class DominantPitchTracker {
             predictedF0: 0.0,
             lockReason: _lastLockReason,
             currentWindow: _currentWindow,
+            localNoiseFloorDb: 0.0,
           );
         }
       }
@@ -426,7 +491,7 @@ class DominantPitchTracker {
       }
     }
     
-    if (selectedPeak != null) {
+  if (selectedPeak != null) {
       // Update with alpha-beta filter - use MEASURED frequency, not predicted
       final measuredF0 = selectedPeak.freq;
       
@@ -450,6 +515,7 @@ class DominantPitchTracker {
             predictedF0: _predictedF0,
             lockReason: _lastLockReason,
             currentWindow: _currentWindow,
+            localNoiseFloorDb: 0.0,
           );
         }
       } else {
@@ -488,7 +554,23 @@ class DominantPitchTracker {
     } else {
       // No valid candidate found - MAIS tracker autonome plus tenace
       // Ne pas incrémenter unlock timer si on n'a juste pas de hints YIN/Harm
-      if ((yinHint != null && yinHint > 0) || (harmonicHint != null && harmonicHint > 0)) {
+      // Anchor guard: if we are still near the averaged f0, slow or freeze unlock
+      bool nearAnchor = false;
+      if (_avgF0Hz > 0) {
+        for (final p in peaks) {
+          final deltaCents = 1200.0 * (math.log(p.freq / _avgF0Hz) / math.ln2).abs();
+          if (deltaCents <= anchorWindowCents) { nearAnchor = true; break; }
+        }
+      }
+      
+      if (_transientGuardMs > 0) {
+        // Freeze unlock during transient guard
+        // Do not increment unlock timer
+        _lastLockReason = "Transient guard active (${_transientGuardMs} ms left)";
+      } else if (nearAnchor) {
+        // Still seeing energy near the long-term f0 -> increment very slowly
+        _unlockTimer += (frameDurationMs * 0.25).round(); // 4x slower
+      } else if ((yinHint != null && yinHint > 0) || (harmonicHint != null && harmonicHint > 0)) {
         _unlockTimer += frameDurationMs; // Normal unlock si hints actifs
       } else {
         // Tracker autonome: unlock plus lent sans hints
@@ -523,21 +605,35 @@ class DominantPitchTracker {
         final strongestOutside = outsideCompetitors.reduce((a, b) => 
           a.totalScore > b.totalScore ? a : b
         );
-        // RESTAURÉ: Concurrent avec marge raisonnable
-        if (strongestOutside.snr > lockThresholdDb + 8.0) { // 14dB seuil raisonnable
+        // Adaptive competitor margin: base + slope * SNR shortfall
+        // Estimate current inside-window SNR (best or 0 if none)
+        final insideSnr = candidates.isNotEmpty ?
+            candidates.map((p) => p.snr).reduce(math.max) : 0.0;
+        final snrShortfall = math.max(0.0, lockThresholdDb - insideSnr);
+        final effectiveMargin = competitorMarginBaseDb + competitorMarginAdaptiveSlope * snrShortfall;
+        if (_transientGuardMs == 0 && strongestOutside.snr > lockThresholdDb + effectiveMargin) {
           strongCompetitor = true;
-          _lastLockReason = "Strong competitor at ${strongestOutside.freq.toStringAsFixed(1)} Hz (${strongestOutside.snr.toStringAsFixed(1)} dB)";
+          _lastLockReason = "Strong competitor (margin ${effectiveMargin.toStringAsFixed(1)} dB) at ${strongestOutside.freq.toStringAsFixed(1)} Hz (${strongestOutside.snr.toStringAsFixed(1)} dB)";
         }
       }
       
       // Check unlock conditions - logique normale basée sur les pics détectés
       final bestAvailableSnr = peaks.isNotEmpty ? 
         peaks.map((p) => p.snr).reduce(math.max) : -120.0;
+      // If a local noise floor is provided, adjust SNR guardrail to lock persistence floor
+      double adjustedUnlockThreshold = unlockThresholdDb;
+      if (_lastLocalNoiseFloorDb != 0.0) {
+        // Interpret bestAvailableSnr as peakDb - localNoiseDb (already SNR),
+        // but we enforce a minimum allowed SNR floor while locked.
+        adjustedUnlockThreshold = math.min(unlockThresholdDb, lockedSnrFloorDb);
+      }
       
       // CONDITIONS D'UNLOCK RESTAURÉES: Équilibre responsivité/stabilité
-      final shouldUnlock = (bestAvailableSnr < unlockThresholdDb && _unlockTimer >= holdOutMs) || // Normal
-                          (strongCompetitor && _unlockTimer >= 100) || // Rapide pour concurrent
-                          (_unlockTimer >= holdOutMs * 2); // Force unlock raisonnable
+      final shouldUnlock = (_transientGuardMs == 0) && (
+                            (bestAvailableSnr < adjustedUnlockThreshold && _unlockTimer >= holdOutMs) || // Guarded by SNR floor
+                            (strongCompetitor && _unlockTimer >= 100) || // Rapide pour concurrent
+                            (_unlockTimer >= holdOutMs * 2)
+                          ); // Force unlock raisonnable
       
       if (shouldUnlock) {
         _state = DominantTrackerState.search;
@@ -551,7 +647,7 @@ class DominantPitchTracker {
         } else if (_unlockTimer >= holdOutMs * 2) {
           unlockReason = "Unlocked: timeout ${_unlockTimer}ms (force unlock)";
         } else {
-          unlockReason = "Unlocked: SNR ${bestAvailableSnr.toStringAsFixed(1)} dB < $unlockThresholdDb dB for $_unlockTimer ms";
+          unlockReason = "Unlocked: SNR ${bestAvailableSnr.toStringAsFixed(1)} dB < ${adjustedUnlockThreshold.toStringAsFixed(1)} dB for $_unlockTimer ms";
         }
         _lastLockReason = unlockReason;
       } else {
@@ -571,6 +667,7 @@ class DominantPitchTracker {
       predictedF0: _predictedF0,
       lockReason: _lastLockReason,
       currentWindow: _currentWindow,
+      localNoiseFloorDb: _lastLocalNoiseFloorDb,
     );
   }
   
@@ -733,5 +830,23 @@ class DominantPitchTracker {
     final combLevel = totalGain / validHarmonics;
     
     return combLevel - baseline;
+  }
+
+  // Compute average dB over [fMin, fMax] band to detect broadband transients
+  double _computeBandAvgDb(Float32List spectrumDb, double binWidth) {
+    final minBin = (fMin / binWidth).floor().clamp(0, spectrumDb.length - 1);
+    final maxBin = (fMax / binWidth).floor().clamp(minBin, spectrumDb.length - 1);
+    if (maxBin <= minBin) return -120.0;
+    double sum = 0.0;
+    int count = 0;
+    for (int i = minBin; i <= maxBin; i++) {
+      final v = spectrumDb[i];
+      if (v.isFinite) {
+        sum += v;
+        count++;
+      }
+    }
+    if (count == 0) return -120.0;
+    return sum / count;
   }
 }
