@@ -1,6 +1,7 @@
 import 'package:go_router/go_router.dart';
 import '../features/home/presentation/pages/home_screen.dart';
 import '../features/tuner/ui/tuner_screen.dart';
+import '../features/tuner/ui/production_tuner_screen.dart';
 import '../features/research/ui/research_screen.dart';
 import '../features/guided_tuner/guided_tuner_page.dart';
 
@@ -16,6 +17,13 @@ GoRouter createRouter() => GoRouter(
         GoRoute(
           path: '/tuner',
           name: 'tuner',
+          pageBuilder: (context, state) => const NoTransitionPage(
+            child: ProductionTunerScreen(),
+          ),
+        ),
+        GoRoute(
+          path: '/tuner-dev',
+          name: 'tuner-dev',
           pageBuilder: (context, state) => const NoTransitionPage(
             child: TunerScreen(),
           ),

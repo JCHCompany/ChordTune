@@ -75,7 +75,8 @@ class SpectroidState extends Equatable {
     double? predictedF0,
     String? lockReason,
     double? currentWindow,
-  }) => SpectroidState(
+  }) =>
+      SpectroidState(
         config: config ?? this.config,
         supportedSampleRates: supportedSampleRates ?? this.supportedSampleRates,
         effectiveSampleRate: effectiveSampleRate ?? this.effectiveSampleRate,
@@ -99,15 +100,38 @@ class SpectroidState extends Equatable {
       );
 
   @override
-  List<Object?> get props => [config, supportedSampleRates, effectiveSampleRate, spectrum, peakFreqHz, peakDb, capturing, audioStatus, f0Yin, confYin, f0Harm, confHarm, f0Fused, confFused, f0Tracked, trackerState, debugPeaks, predictedF0, lockReason, currentWindow];
+  List<Object?> get props => [
+        config,
+        supportedSampleRates,
+        effectiveSampleRate,
+        spectrum,
+        peakFreqHz,
+        peakDb,
+        capturing,
+        audioStatus,
+        f0Yin,
+        confYin,
+        f0Harm,
+        confHarm,
+        f0Fused,
+        confFused,
+        f0Tracked,
+        trackerState,
+        debugPeaks,
+        predictedF0,
+        lockReason,
+        currentWindow
+      ];
 }
 
 class SpectroidCubit extends Cubit<SpectroidState> {
   Timer? _timer; // legacy demo timer
   SpectroidEngine? _engine;
+  // Sticky-lock removed for maximum reactivity
 
   // Can't be const because presetSpectre() is a factory method.
-  SpectroidCubit() : super(SpectroidState(config: SpectroidConfig.presetSpectre()));
+  SpectroidCubit()
+      : super(SpectroidState(config: SpectroidConfig.presetSpectre()));
 
   Future<void> start() async {
     _timer?.cancel();
@@ -116,6 +140,7 @@ class SpectroidCubit extends Cubit<SpectroidState> {
     await _engine!.start(
       cfg: state.config,
       onFrame: (f) {
+        // Use raw tracker output for maximum reactivity - no sticky grace
         emit(state.copyWith(
           spectrum: f.magLinear,
           peakFreqHz: f.peakHz,
@@ -128,11 +153,11 @@ class SpectroidCubit extends Cubit<SpectroidState> {
           confHarm: f.confHarm,
           f0Fused: f.f0Fused,
           confFused: f.confFused,
-          f0Tracked: f.f0Tracked,
-          trackerState: f.trackerState,
+          f0Tracked: f.f0Tracked, // Raw output
+          trackerState: f.trackerState, // Raw output
           debugPeaks: f.debugPeaks,
           predictedF0: f.predictedF0,
-          lockReason: f.lockReason,
+          lockReason: f.lockReason, // Raw output
           currentWindow: f.currentWindow,
         ));
       },
@@ -147,24 +172,26 @@ class SpectroidCubit extends Cubit<SpectroidState> {
   }
 
   Future<void> reconfigure(SpectroidConfig cfg) async {
-  debugPrint('SpectroidCubit: Reconfiguring (spectre default), spectroidMode=${cfg.spectroidMode}, audioSource=${cfg.audioSource.name}');
-    
+    debugPrint(
+        'SpectroidCubit: Reconfiguring (spectre default), spectroidMode=${cfg.spectroidMode}, audioSource=${cfg.audioSource.name}');
+
     // Apply new configuration; restart engine if running
     final wasCapturing = state.capturing;
-    
+
     // Always stop the engine first to ensure clean reconfiguration
     if (wasCapturing) {
       await _engine?.stop();
     }
-    
+
     // Update state with new config
     emit(state.copyWith(config: cfg, capturing: false));
-    
+
     // Restart engine with new configuration if it was running
     if (wasCapturing) {
       await _engine?.start(
         cfg: cfg,
         onFrame: (f) {
+          // Use raw tracker output for maximum reactivity
           emit(state.copyWith(
             spectrum: f.magLinear,
             peakFreqHz: f.peakHz,
@@ -177,11 +204,11 @@ class SpectroidCubit extends Cubit<SpectroidState> {
             confHarm: f.confHarm,
             f0Fused: f.f0Fused,
             confFused: f.confFused,
-            f0Tracked: f.f0Tracked,
-            trackerState: f.trackerState,
+            f0Tracked: f.f0Tracked, // Raw output
+            trackerState: f.trackerState, // Raw output
             debugPeaks: f.debugPeaks,
             predictedF0: f.predictedF0,
-            lockReason: f.lockReason,
+            lockReason: f.lockReason, // Raw output
             currentWindow: f.currentWindow,
             capturing: true,
           ));
@@ -195,5 +222,6 @@ class SpectroidCubit extends Cubit<SpectroidState> {
     await reconfigure(SpectroidConfig.presetSpectre());
   }
 
-  Future<void> setDisplayBandMax(int hz) async => await reconfigure(state.config.copyWith(displayBandMax: hz));
+  Future<void> setDisplayBandMax(int hz) async =>
+      await reconfigure(state.config.copyWith(displayBandMax: hz));
 }

@@ -28,6 +28,12 @@ class SpectroidConfig extends Equatable {
   final SpectroidPreset preset;
   final String requestedSampleRate; // 'auto' or numeric string
   final List<int> supportedSampleRates; // read-only
+
+  // Guided tuning support
+  final bool guidanceEnabled; // enable guided note biasing
+  final List<double> guidedTargetsHz; // target note frequencies (e.g., E2..E4)
+  final double guidanceWindowCents; // window around targets to apply bias
+  final double guidanceBiasDb; // bias amount to boost peaks near targets
   final int effectiveSampleRate; // runtime info
 
   final int fsCapture; // capture request
@@ -98,6 +104,11 @@ class SpectroidConfig extends Equatable {
       dominantCompetitorMarginBaseDb; // base dB margin vs competitor to unlock (replaces fixed +8 dB)
   final double
       dominantCompetitorMarginAdaptiveSlope; // dB per dB shortfall below lock threshold
+  // Spectral width discrimination: narrow peak (note) vs wide peak (noise)
+  final double narrowPeakWidthHz; // Threshold for "narrow" peak (tonal, Hz)
+  final double widePeakWidthHz; // Threshold for "wide" peak (noisy, Hz)
+  final double narrowPeakMarginDb; // Competitor margin for narrow peaks (fast unlock)
+  final double widePeakMarginDb; // Competitor margin for wide peaks (tolerated)
   // Locked-state persistence: don't unlock on SNR until below this floor vs local noise
   final double lockedSnrFloorDb; // e.g. -128 dB
   // Whitening option
@@ -139,17 +150,17 @@ class SpectroidConfig extends Equatable {
     this.effectiveSampleRate = 48000,
     this.fsCapture = 48000,
     this.resampleTo,
-    this.aaMode = AAMode.auto,
-    this.fftSize = 2048,
+    this.aaMode = AAMode.on,
+    this.fftSize = 1024,
     this.overlap = 0.75,
     this.window = SpectroidWindow.hann,
     this.kaiserBeta,
     this.firDecimation = 2,
-    this.decimLevels = 0,
-    this.lowFreqHpf = LowFreqHighPass.hz1,
+    this.decimLevels = 5,
+    this.lowFreqHpf = LowFreqHighPass.hz10,
     this.enablePitch = true,
     this.pitchFMin = 40.0,
-    this.pitchFMax = 4000.0,
+    this.pitchFMax = 1000.0,
     this.pitchBinsPerOctave = 24,
     this.logFreqRep = LogFreqRep.cqt,
     this.yinWindow = 2048,
@@ -158,8 +169,8 @@ class SpectroidConfig extends Equatable {
     this.harmH = 8,
     this.harmTolCents = 20.0,
     this.harmWeightDecay = 0.85,
-    this.fusionYinWeight = 0.5,
-    this.fusionHarmWeight = 0.5,
+    this.fusionYinWeight = 0.85,
+    this.fusionHarmWeight = 0.35,
     this.antiOctaveEnabled = true,
     this.antiOctaveSubharmThresh = 0.25,
     this.trackerBinsPerOct = 36,
@@ -168,15 +179,19 @@ class SpectroidConfig extends Equatable {
     this.trackerMaxJumpSearchCents = 400.0,
     this.trackerHoldInMs = 120,
     this.trackerHoldOutMs = 250,
-    this.trackerSmoothMs = 40,
+    this.trackerSmoothMs = 0, // No smoothing for max reactivity
     this.trackerSnrOn = 6.0,
     this.trackerSnrOff = 3.0,
+    this.guidanceEnabled = false,
+    this.guidedTargetsHz = const [],
+    this.guidanceWindowCents = 50.0,
+    this.guidanceBiasDb = 3.0,
     this.trackerLockInMs = 2000,
     this.trackerAdaptiveWindow = true,
     this.trackerWindowMinCents = 30.0,
     this.trackerWindowMaxCents = 80.0,
     this.trackerCompetitorMarginDb = 6.0,
-    this.trackerGatingDbfs = -18.0,
+    this.trackerGatingDbfs = -80.0,
     this.trackerCoDecayEnabled = true,
     this.dominantLockThresholdDb =
         3.0, // SIGNAUX FAIBLES: Pour lock à -50dB (was 6.0)
@@ -195,17 +210,21 @@ class SpectroidConfig extends Equatable {
     this.dominantNeighborSpanBins = 20,
     this.dominantCompetitorMarginBaseDb = 8.0,
     this.dominantCompetitorMarginAdaptiveSlope = 0.2,
+    this.narrowPeakWidthHz = 20.0, // Pics tonaux (notes) < 20 Hz
+    this.widePeakWidthHz = 50.0, // Bruit large bande > 50 Hz
+    this.narrowPeakMarginDb = 3.0, // Marge faible pour pics étroits (unlock rapide)
+    this.widePeakMarginDb = 12.0, // Marge haute pour bruit (toléré)
     this.lockedSnrFloorDb = -128.0,
     this.whiteningEnabled = false,
     this.showTrackerState = true,
     this.overlayCentsBand = 20.0,
-    this.displayBandMax = 20000,
-    this.emaAlphaAmp = 0.7,
+    this.displayBandMax = 8000,
+    this.emaAlphaAmp = 0.99,
     this.peakTracking = true,
     this.peakSearchMin = 20,
     this.peakSearchMax = 20000,
     this.emaAlphaFreq = 0.7,
-    this.harmonicGuard = false,
+    this.harmonicGuard = true,
     this.decimation = 0,
     this.dcRemove = true,
     this.spectroidMode = false,
@@ -258,6 +277,10 @@ class SpectroidConfig extends Equatable {
     double? yinThreshold,
     int? harmH,
     double? harmTolCents,
+    bool? guidanceEnabled,
+    List<double>? guidedTargetsHz,
+    double? guidanceWindowCents,
+    double? guidanceBiasDb,
     double? harmWeightDecay,
     double? fusionYinWeight,
     double? fusionHarmWeight,
@@ -290,6 +313,10 @@ class SpectroidConfig extends Equatable {
     int? dominantNeighborSpanBins,
     double? dominantCompetitorMarginBaseDb,
     double? dominantCompetitorMarginAdaptiveSlope,
+    double? narrowPeakWidthHz,
+    double? widePeakWidthHz,
+    double? narrowPeakMarginDb,
+    double? widePeakMarginDb,
     double? lockedSnrFloorDb,
     bool? whiteningEnabled,
     bool? showTrackerState,
@@ -302,6 +329,10 @@ class SpectroidConfig extends Equatable {
     return SpectroidConfig(
       preset: preset ?? this.preset,
       requestedSampleRate: requestedSampleRate ?? this.requestedSampleRate,
+      guidanceEnabled: guidanceEnabled ?? this.guidanceEnabled,
+      guidedTargetsHz: guidedTargetsHz ?? this.guidedTargetsHz,
+      guidanceWindowCents: guidanceWindowCents ?? this.guidanceWindowCents,
+      guidanceBiasDb: guidanceBiasDb ?? this.guidanceBiasDb,
       supportedSampleRates: supportedSampleRates ?? this.supportedSampleRates,
       effectiveSampleRate: effectiveSampleRate ?? this.effectiveSampleRate,
       fsCapture: fsCapture ?? this.fsCapture,
@@ -375,6 +406,10 @@ class SpectroidConfig extends Equatable {
       dominantCompetitorMarginAdaptiveSlope:
           dominantCompetitorMarginAdaptiveSlope ??
               this.dominantCompetitorMarginAdaptiveSlope,
+      narrowPeakWidthHz: narrowPeakWidthHz ?? this.narrowPeakWidthHz,
+      widePeakWidthHz: widePeakWidthHz ?? this.widePeakWidthHz,
+      narrowPeakMarginDb: narrowPeakMarginDb ?? this.narrowPeakMarginDb,
+      widePeakMarginDb: widePeakMarginDb ?? this.widePeakMarginDb,
       lockedSnrFloorDb: lockedSnrFloorDb ?? this.lockedSnrFloorDb,
       whiteningEnabled: whiteningEnabled ?? this.whiteningEnabled,
       showTrackerState: showTrackerState ?? this.showTrackerState,
@@ -404,38 +439,48 @@ class SpectroidConfig extends Equatable {
         preset: SpectroidPreset.spectre,
         fsCapture: 48000,
         resampleTo: 16000,
-      fftSize: 1024,
-      // Moderate overlap for smooth UI with ~40-45 ms hop at eff. Fs
-      overlap: 0.50,
+        fftSize: 1024,
+        // Moderate overlap for smooth UI with ~40-45 ms hop at eff. Fs
+        overlap: 0.50,
         window: SpectroidWindow.hann,
-      // Faster decay for visual spectrum and tracked peak smoothing
-      emaAlphaAmp: 0.5,
-      emaAlphaFreq: 0.6,
-        displayBandMax: 20000,
+        // Much faster decay for maximum reactivity
+        emaAlphaAmp: 0.99,
+        emaAlphaFreq: 0.2,
+        displayBandMax: 8000,
         dcRemove: true,
         spectroidMode: false,
         displayUnit: DisplayUnit.dBHz,
         displayMode: DisplayMode.psdPrecise,
-      // Keep decimation modest to avoid very long windows (slow decay)
-      firDecimation: 1,
-      decimLevels: 2, // 2^2 = 4 => eff. Fs ≈ 12 kHz, window ≈ 85 ms
-        lowFreqHpf: LowFreqHighPass.hz1,
+        // Keep decimation modest to avoid very long windows (slow decay)
+        firDecimation: 1,
+        decimLevels: 5, // 2^2 = 4 => eff. Fs ≈ 12 kHz, window ≈ 85 ms
+        lowFreqHpf: LowFreqHighPass.hz10,
         enablePitch: true,
         // CORRECTIONS URGENTES: Éviter lock sans signal + convergence rapide
         dominantLockThresholdDb:
             20.0, // BEAUCOUP plus strict - éviter lock sans signal
         dominantUnlockThresholdDb:
             10.0, // Plus strict aussi pour éviter lock fantôme
-        dominantHoldInMs:
-            200, // PLUS DE TEMPS - permet YIN/Harmonic de converger vers fondamental (was 100ms)
-        dominantHoldOutMs: 50, // TRÈS RAPIDE unlock
+        dominantHoldInMs: 80, // PLUS RAPIDE - réactivité immédiate
+        dominantHoldOutMs: 30, // TRÈS RAPIDE unlock
         dominantLockWindowCents: 80.0, // Fenêtre plus large pour exploration
         dominantMaxJumpCentsPerS: 1000.0, // BEAUCOUP plus rapide - 10x plus
-        firSmoothing: false,
+        firSmoothing: false, // Disabled for max reactivity
         audioSource: AudioSource.unprocessed,
         dcFilter: DcFilterType.iir,
         notchFilter: NotchFilter.hz60,
         disableAudioEffects: true,
+        guidanceEnabled: true,
+        guidedTargetsHz: [
+          82.4069, // E2
+          110.0000, // A2
+          146.8324, // D3
+          195.9977, // G3
+          246.9417, // B3
+          329.6276, // E4
+        ],
+        guidanceWindowCents: 100.0,
+        guidanceBiasDb: 3.0,
       );
 
   // Keep only the 'spectre' preset as the single default configuration
@@ -479,10 +524,6 @@ class SpectroidConfig extends Equatable {
         pitchFMax,
         pitchBinsPerOctave,
         logFreqRep,
-        yinWindow,
-        yinHop,
-        yinThreshold,
-        harmH,
         harmTolCents,
         harmWeightDecay,
         fusionYinWeight,
@@ -515,6 +556,11 @@ class SpectroidConfig extends Equatable {
         dominantPeakProminenceDb,
         dominantNeighborSpanBins,
         dominantCompetitorMarginBaseDb,
+        dominantCompetitorMarginAdaptiveSlope,
+        narrowPeakWidthHz,
+        widePeakWidthHz,
+        narrowPeakMarginDb,
+        widePeakMarginDb,
         dominantCompetitorMarginAdaptiveSlope,
         lockedSnrFloorDb,
         whiteningEnabled,

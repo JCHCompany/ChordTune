@@ -19,11 +19,26 @@ class HomeScreen extends StatelessWidget {
               style: Theme.of(context).textTheme.titleLarge,
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 48), // Plus d'espace avant le bouton Tuner
             FilledButton.icon(
               onPressed: () => context.go('/tuner'),
               icon: const Icon(Icons.tune),
               label: Text(loc.tunerTitle),
+              style: FilledButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                textStyle:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              ),
+            ),
+            const SizedBox(height: 32),
+            const Divider(indent: 40, endIndent: 40),
+            const SizedBox(height: 16),
+            Text(
+              'Outils de développement',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
             ),
             const SizedBox(height: 12),
             OutlinedButton.icon(
@@ -36,6 +51,12 @@ class HomeScreen extends StatelessWidget {
               onPressed: () => context.go('/guided'),
               icon: const Icon(Icons.light_mode),
               label: const Text('Accordeur guidé'),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () => context.go('/tuner-dev'),
+              icon: const Icon(Icons.developer_mode),
+              label: const Text('Tuner (dev)'),
             ),
           ],
         ),

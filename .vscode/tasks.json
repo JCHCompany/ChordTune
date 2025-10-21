@@ -11,6 +11,36 @@
 				"$dart-build_runner"
 			],
 			"group": "build"
+		},
+		{
+			"label": "Flutter Analyze",
+			"type": "shell",
+			"command": "flutter analyze",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$dart-cli"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Flutter Analyze",
+			"type": "shell",
+			"command": "flutter analyze",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$dart-cli"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Flutter Analyze",
+			"type": "shell",
+			"command": "flutter analyze",
+			"args": [],
+			"isBackground": false,
+			"group": "build"
 		}
 	]
 }
