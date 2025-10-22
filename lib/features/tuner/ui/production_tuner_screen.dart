@@ -6,6 +6,8 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../research/spectroid/spectroid_cubit.dart';
 import '../../../app/l10n/l10n.dart';
 import '../../../dsp/dominant_pitch_tracker.dart';
+import '../widgets/tuner_needle_gauge.dart';
+import '../../../app/app_theme.dart';
 
 /// État stable d'une note détectée
 class _StableNoteState {
@@ -86,6 +88,8 @@ class _ProductionTunerScreenState extends State<ProductionTunerScreen> {
   _StableNoteState? _displayedNote;
   bool _isLocked = false; // mirror trackerState
   bool _showLockDisplay = false; // green frame overlay (immediate)
+  DateTime _lastLockTime =
+      DateTime.fromMillisecondsSinceEpoch(0); // pour maintien 200ms
 
   // Smoothing/quantization state
   double _errS = 0.0; // smoothed cents error
@@ -114,6 +118,11 @@ class _ProductionTunerScreenState extends State<ProductionTunerScreen> {
   String _tuningKey = 'guitar_standard';
   List<_GuidedTarget> _guidedTargets = const [];
 
+  // Per-note tuning state
+  final Map<String, bool> _noteTuned = {}; // true=green/tuned
+  final Map<String, DateTime> _noteEnterZoneAt = {};
+  final Map<String, DateTime> _noteExitZoneAt = {};
+
   @override
   void initState() {
     super.initState();
@@ -140,11 +149,14 @@ class _ProductionTunerScreenState extends State<ProductionTunerScreen> {
     required double peakDb,
     List<PeakInfo>? peaks,
   }) {
-    // Gate: show only when locked; hide immediately otherwise
+    // Gate: show only when locked; hide after 200ms hold
     final locked = trackerState.toLowerCase() == 'locked' && f0 > 0;
     final now = DateTime.now();
+
     if (!locked) {
-      if (mounted) {
+      // Maintien de la dernière valeur pendant 200ms pour éviter le clignotement
+      final timeSinceLastLock = now.difference(_lastLockTime).inMilliseconds;
+      if (timeSinceLastLock > 200 && mounted) {
         setState(() {
           _isLocked = false;
           _showLockDisplay = false;
@@ -154,10 +166,16 @@ class _ProductionTunerScreenState extends State<ProductionTunerScreen> {
           _fillProgress = 0.0;
           _isTuned = false;
           _bounce = false;
+          // Track exit for currently highlighted note
+          if (_lastNoteName != null) {
+            _noteExitZoneAt[_lastNoteName!] = DateTime.now();
+          }
         });
       }
       return;
     } else {
+      // Locked: mettre à jour le timestamp de dernier lock
+      _lastLockTime = now;
       if (!_isLocked || !_showLockDisplay) {
         // Transition to locked -> show immediately
         _isLocked = true;
@@ -188,10 +206,19 @@ class _ProductionTunerScreenState extends State<ProductionTunerScreen> {
       final int midiRounded = noteInfo['midiNote'] as int;
       fTarget = 440.0 * math.pow(2.0, (midiRounded - 69) / 12.0).toDouble();
     }
-  // error in cents vs selected target
-  final errCents = 1200.0 * (math.log(f0 / fTarget) / math.ln2);
+    // error in cents vs selected target
+    final errCents = 1200.0 * (math.log(f0 / fTarget) / math.ln2);
+    
+    // Détection de changement de note pour reset du lissage
+    final noteChanged = _lastNoteName != null && _lastNoteName != noteName;
+    
+    // RESET du lissage lors du premier lock ou changement de note
+    // pour convergence immédiate au lieu de partir de 0
+    if (_lastNoteName == null || noteChanged) {
+      _errS = errCents; // Initialiser avec la vraie valeur
+    }
 
-  // Frame delta
+    // Frame delta
     final dtMs = (_lastFrameTs.millisecondsSinceEpoch == 0)
         ? 16.0
         : (now
@@ -208,15 +235,17 @@ class _ProductionTunerScreenState extends State<ProductionTunerScreen> {
     }
     _lastPeakDb = peakDb;
 
-    // Adaptive tau by confidence in [0.08..0.30] s (slightly faster)
+    // Lissage adaptatif pour affichage stable et fluide
+    // - Tau (temps de lissage) adapté selon confiance: 80-300ms
+    // - Haute confiance -> lissage rapide (80ms) pour réactivité
+    // - Basse confiance -> lissage lent (300ms) pour stabilité
     _lastConf = conf.clamp(0.0, 1.0);
-    const tauMinMs = 80.0; // 0.08 s
-    const tauMaxMs = 300.0; // 0.30 s
+    const tauMinMs = 80.0; // Réactif quand signal stable
+    const tauMaxMs = 300.0; // Stable quand signal incertain
     double tauMs = (_smoothTauMs).clamp(tauMinMs, tauMaxMs);
-    // Adapt toward tauMin when confidence is high
     tauMs = tauMaxMs - (_lastConf * (tauMaxMs - tauMinMs));
 
-    // EMA
+    // EMA (Exponential Moving Average) pour lisser les cents
     final alpha = dtMs / (tauMs + dtMs);
     _errS = _errS + alpha * (errCents - _errS);
 
@@ -256,12 +285,48 @@ class _ProductionTunerScreenState extends State<ProductionTunerScreen> {
             _bounce = false;
           }
           _lastNoteName = newName;
+
+          // ═══════════════════════════════════════════════════════════════
+          // AFFICHAGE DE DÉVIATION POUR L'UTILISATEUR
+          // ═══════════════════════════════════════════════════════════════
+          // Valeur entre -50 et +50, où 0 = note parfaitement accordée
+          //
+          // - Utilise _errS (lissé sur 80-300ms selon confiance du signal)
+          // - Clampé à ±50 cents pour plage lisible et cohérente
+          // - Arrondi à l'unité pour affichage propre: -7, -3, 0, +2, +9, etc.
+          //
+          // Références de précision:
+          // - ±10 cents: Correct pour scène live
+          // - ±5 cents: Seuil de perception moyenne de l'oreille humaine
+          // - ±3 cents: Précision pro
+          // - ±2 cents: Zone "accordée" (affichage vert) - Juste en studio
+          // - ±1 cent: Quasi parfait (luthier)
+          final displayCents = _errS.clamp(-50.0, 50.0).roundToDouble();
+
           _displayedNote = _StableNoteState(
             noteName: noteName,
             frequency: f0,
-            cents: errCents,
+            cents: displayCents,
             timestamp: now,
           );
+
+          // Zone "accordée": ±2 cents (précision professionnelle/studio)
+          final inZone = displayCents.abs() <= 2.0;
+          if (inZone) {
+            _noteEnterZoneAt[noteName] ??= now;
+            _noteExitZoneAt.remove(noteName);
+            final enteredAt = _noteEnterZoneAt[noteName]!;
+            if (now.difference(enteredAt).inMilliseconds >= 2000) {
+              _noteTuned[noteName] = true; // turn green after 2s in zone
+            }
+          } else {
+            _noteExitZoneAt[noteName] ??= now;
+            final exitedAt = _noteExitZoneAt[noteName]!;
+            if (now.difference(exitedAt).inMilliseconds >= 500) {
+              _noteTuned[noteName] = false; // revert after 0.5s detuned
+              _noteEnterZoneAt.remove(noteName);
+            }
+          }
 
           // Update filling progress (kept, but does not gate display)
           final bool nearTarget = _qDisplay.abs() <= 1; // 0 or 1 step
@@ -331,62 +396,30 @@ class _ProductionTunerScreenState extends State<ProductionTunerScreen> {
             body: SafeArea(
               child: Stack(
                 children: [
-                  // Main tuner UI shown only when locked
-                  if (_isLocked)
-                    Center(
-                      child: _ChordRowTuner(
-                        display: _displayedNote,
-                        step: _qDisplay,
-                        showPlusMinus: _showPlusMinus,
-                        guidedTargets: _guidedTargets,
-                      ),
-                    ),
-                  // Green lock frame overlay (same style as R&D), immediate
-                  if (_showLockDisplay)
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 12),
-                        decoration: BoxDecoration(
-                          color: Colors.green.withValues(alpha: 0.15),
-                          border: Border.all(color: Colors.green, width: 2),
-                          borderRadius: BorderRadius.circular(8),
+                  // Main tuner UI
+                  Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Semicircle gauge; when not locked, shows mic+dots
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 20.0),
+                          child: TunerNeedleGauge(
+                            cents: _isLocked ? _displayedNote?.cents : null,
+                            size: MediaQuery.of(context).size.width * 0.9,
+                          ),
                         ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Text(
-                              'LOCKED',
-                              style: TextStyle(
-                                color: Colors.green,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              (_displayedNote?.frequency ?? 0)
-                                  .toStringAsFixed(2),
-                              style: const TextStyle(
-                                color: Colors.green,
-                                fontSize: 28,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const Text(
-                              'Hz',
-                              style: TextStyle(
-                                color: Colors.green,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ],
+                        _ChordRowTuner(
+                          display: _displayedNote,
+                          step: _qDisplay,
+                          showPlusMinus: _showPlusMinus,
+                          guidedTargets: _guidedTargets,
+                          tuned: _noteTuned,
+                          noteEnterZoneAt: _noteEnterZoneAt,
                         ),
-                      ),
+                      ],
                     ),
+                  ),
                 ],
               ),
             ),
@@ -547,22 +580,25 @@ class _ProductionTunerScreenState extends State<ProductionTunerScreen> {
   }
 }
 
-/// Horizontal chord row with a gold precision circle sweeping above
+/// Horizontal chord row with always-visible notes and tuned state
 class _ChordRowTuner extends StatelessWidget {
   final _StableNoteState? display;
   final int step; // -5..+5
   final bool showPlusMinus;
   final List<_GuidedTarget> guidedTargets;
+  final Map<String, bool> tuned; // note label -> tuned state
+  final Map<String, DateTime> noteEnterZoneAt; // note label -> enter time
   const _ChordRowTuner({
     required this.display,
     required this.step,
     required this.showPlusMinus,
     required this.guidedTargets,
+    required this.tuned,
+    required this.noteEnterZoneAt,
   });
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final notes = guidedTargets.isNotEmpty
         ? guidedTargets
         : const [
@@ -576,7 +612,6 @@ class _ChordRowTuner extends StatelessWidget {
 
     // Compute nearest label and precise cents error
     String? activeLabel;
-    double centsError = 0.0;
     if (display != null) {
       _GuidedTarget best = notes.first;
       double bestDiff = (display!.frequency - best.freq).abs();
@@ -588,142 +623,194 @@ class _ChordRowTuner extends StatelessWidget {
         }
       }
       activeLabel = best.label;
-      // Calculate precise cents error vs target
-      centsError = 1200.0 * (math.log(display!.frequency / best.freq) / math.ln2);
     }
 
-    // Circle position and styling based on cents
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final totalWidth = constraints.maxWidth * 0.9;
-        final leftPad = constraints.maxWidth * 0.05;
-        
-        // Map cents to position: -50¢ -> 0, 0¢ -> 0.5, +50¢ -> 1.0
-        // Beyond ±50¢ clamp to edges
-        final centsPos = ((centsError + 50.0) / 100.0).clamp(0.0, 1.0);
-        final cx = leftPad + totalWidth * centsPos;
-        final cy = 32.0; // moved higher up
-        
-        // Color coding: green at 0, gold within ±50, red beyond
-        Color circleColor;
-        Color textColor;
-        Color haloColor;
-        if (centsError.abs() <= 2.0) {
-          // Perfect tuning: green
-          circleColor = Colors.green;
-          textColor = Colors.green;
-          haloColor = Colors.green.withOpacity(0.15);
-        } else if (centsError.abs() <= 50.0) {
-          // Within range: gold
-          circleColor = theme.colorScheme.secondary;
-          textColor = theme.colorScheme.secondary;
-          haloColor = theme.colorScheme.secondary.withOpacity(0.15);
-        } else {
-          // Out of range: red
-          circleColor = Colors.red;
-          textColor = Colors.red;
-          haloColor = Colors.red.withOpacity(0.15);
-        }
-        
-        final dotSize = 48.0;
-        final shadow = Colors.black.withOpacity(0.10);
-        
-        // Format cents display
-        String centsText;
-        if (centsError.abs() > 50.0) {
-          centsText = centsError > 0 ? '>50' : '<50';
-        } else {
-          final roundedCents = centsError.round();
-          centsText = roundedCents == 0 ? '0' : '${roundedCents > 0 ? '+' : ''}${roundedCents}¢';
-        }
-
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              height: cy + dotSize + 16,
-              width: constraints.maxWidth,
-              child: Stack(
-                children: [
-                  // precision circle with halo (only when we have a display)
-                  if (display != null)
-                    Positioned(
-                      left: cx - dotSize / 2,
-                      top: cy - dotSize / 2,
-                      child: Container(
-                        width: dotSize,
-                        height: dotSize,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: haloColor,
-                          border: Border.all(color: circleColor, width: 2.5),
-                          boxShadow: [
-                            BoxShadow(color: shadow, blurRadius: 8, spreadRadius: 3),
-                          ],
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          centsText,
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                color: textColor,
-                                fontWeight: FontWeight.w800,
-                                fontSize: 13,
-                              ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          for (final t in notes)
+            _NoteChip(
+              label: t.label,
+              active: t.label == activeLabel,
+              tuned: tuned[t.label] == true,
+              inZone: t.label == activeLabel &&
+                  display != null &&
+                  display!.cents.abs() <= 2.0,
             ),
-            // Row of chord notes
-            Padding(
-              padding: EdgeInsets.symmetric(horizontal: leftPad),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  for (final t in notes)
-                    _NoteChip(
-                      label: t.label,
-                      active: t.label == activeLabel,
-                    ),
-                ],
-              ),
-            ),
-          ],
-        );
-      },
+        ],
+      ),
     );
   }
 }
 
-class _NoteChip extends StatelessWidget {
+class _NoteChip extends StatefulWidget {
   final String label;
   final bool active;
-  const _NoteChip({required this.label, required this.active});
+  final bool tuned;
+  final bool inZone; // true if active AND within ±4 cents
+  const _NoteChip({
+    required this.label,
+    required this.active,
+    required this.tuned,
+    required this.inZone,
+  });
+
+  @override
+  State<_NoteChip> createState() => _NoteChipState();
+}
+
+class _NoteChipState extends State<_NoteChip>
+    with SingleTickerProviderStateMixin {
+  AnimationController? _progressController;
+  bool _wasInZone = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _progressController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000),
+    );
+  }
+
+  @override
+  void dispose() {
+    _progressController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(_NoteChip oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // Start animation when entering zone (active + within ±4 cents)
+    if (widget.inZone && !_wasInZone && !widget.tuned) {
+      _progressController?.forward(from: 0.0);
+      _wasInZone = true;
+    }
+
+    // Cancel animation if exiting zone before completion
+    if (!widget.inZone && _wasInZone && !widget.tuned) {
+      _progressController?.reset();
+      _wasInZone = false;
+    }
+
+    // Complete animation immediately when tuned
+    if (widget.tuned && !oldWidget.tuned) {
+      _progressController?.value = 1.0;
+      _wasInZone = false;
+    }
+
+    // Reset if no longer tuned or no longer active
+    if ((!widget.tuned && oldWidget.tuned) ||
+        (!widget.active && oldWidget.active)) {
+      _progressController?.reset();
+      _wasInZone = false;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tTheme = theme.extension<TunerTheme>();
     final baseColor = theme.colorScheme.onSurface;
-    final highlight = theme.colorScheme.primary;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 120),
-      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
-      decoration: BoxDecoration(
-        color: active ? baseColor.withOpacity(0.08) : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
-        border: active ? Border.all(color: highlight, width: 2) : null,
-      ),
-      child: Text(
-        label,
-        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              color: baseColor,
-              fontWeight: active ? FontWeight.w800 : FontWeight.w600,
-              fontSize: active ? 28 : 22,
-              letterSpacing: -0.5,
+    final gold = tTheme?.gold ?? theme.colorScheme.secondary;
+    final green = tTheme?.green ?? Colors.green;
+
+    // Scale up ONLY during active detection (not after tuned)
+    final double scale = widget.active && !widget.tuned ? 1.08 : 1.0;
+
+    // Font size transitions
+    final double fontSize = widget.active && !widget.tuned ? 28 : 24;
+
+    return AnimatedScale(
+      scale: scale,
+      duration: const Duration(milliseconds: 150),
+      child: SizedBox(
+        width: 50,
+        height: 50,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // Base border circle
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                color: Colors.transparent,
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: widget.tuned
+                      ? green
+                      : (widget.active ? gold : baseColor.withOpacity(0.3)),
+                  width: widget.tuned ? 2.5 : (widget.active ? 2 : 1),
+                ),
+              ),
             ),
+            // Green progress ring during validation (2s animation)
+            // Only show when in zone and not yet tuned
+            if (widget.inZone && !widget.tuned && _wasInZone)
+              AnimatedBuilder(
+                animation: _progressController!,
+                builder: (context, child) {
+                  return CustomPaint(
+                    size: const Size(50, 50),
+                    painter: _ProgressRingPainter(
+                      progress: _progressController!.value,
+                      color: green,
+                      strokeWidth: 3.0,
+                    ),
+                  );
+                },
+              ),
+            // Note label - GREEN when tuned
+            Text(
+              widget.label,
+              style: TextStyle(
+                fontSize: fontSize,
+                fontWeight: FontWeight.bold,
+                color: widget.tuned ? green : baseColor,
+              ),
+            ),
+          ],
+        ),
       ),
     );
+  }
+}
+
+class _ProgressRingPainter extends CustomPainter {
+  final double progress;
+  final Color color;
+  final double strokeWidth;
+
+  _ProgressRingPainter({
+    required this.progress,
+    required this.color,
+    this.strokeWidth = 3.0,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Rect.fromLTWH(0, 0, size.width, size.height);
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+
+    const startAngle = -math.pi / 2; // Start at top
+    final sweepAngle = 2 * math.pi * progress;
+
+    canvas.drawArc(rect, startAngle, sweepAngle, false, paint);
+  }
+
+  @override
+  bool shouldRepaint(_ProgressRingPainter oldDelegate) {
+    return oldDelegate.progress != progress;
   }
 }
 

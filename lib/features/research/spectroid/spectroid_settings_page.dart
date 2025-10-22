@@ -645,9 +645,7 @@ class _SpectroidSettingsPageState extends State<SpectroidSettingsPage> {
             const Text('Discrimination largeur spectrale (pic tonal vs bruit)',
                 style: TextStyle(fontWeight: FontWeight.bold)),
             Row(children: [
-              const SizedBox(
-                  width: 200,
-                  child: Text('Seuil pic étroit (Hz)')),
+              const SizedBox(width: 200, child: Text('Seuil pic étroit (Hz)')),
               Expanded(
                   child: Slider(
                       min: 5,
@@ -655,13 +653,11 @@ class _SpectroidSettingsPageState extends State<SpectroidSettingsPage> {
                       divisions: 9,
                       value: _cfg.narrowPeakWidthHz.clamp(5, 50),
                       label: _cfg.narrowPeakWidthHz.toStringAsFixed(0),
-                      onChanged: (v) => setState(() =>
-                          _cfg = _cfg.copyWith(narrowPeakWidthHz: v))))
+                      onChanged: (v) => setState(
+                          () => _cfg = _cfg.copyWith(narrowPeakWidthHz: v))))
             ]),
             Row(children: [
-              const SizedBox(
-                  width: 200,
-                  child: Text('Seuil pic large (Hz)')),
+              const SizedBox(width: 200, child: Text('Seuil pic large (Hz)')),
               Expanded(
                   child: Slider(
                       min: 30,
@@ -669,13 +665,11 @@ class _SpectroidSettingsPageState extends State<SpectroidSettingsPage> {
                       divisions: 12,
                       value: _cfg.widePeakWidthHz.clamp(30, 150),
                       label: _cfg.widePeakWidthHz.toStringAsFixed(0),
-                      onChanged: (v) => setState(() =>
-                          _cfg = _cfg.copyWith(widePeakWidthHz: v))))
+                      onChanged: (v) => setState(
+                          () => _cfg = _cfg.copyWith(widePeakWidthHz: v))))
             ]),
             Row(children: [
-              const SizedBox(
-                  width: 200,
-                  child: Text('Marge pic étroit (dB)')),
+              const SizedBox(width: 200, child: Text('Marge pic étroit (dB)')),
               Expanded(
                   child: Slider(
                       min: 1,
@@ -683,13 +677,11 @@ class _SpectroidSettingsPageState extends State<SpectroidSettingsPage> {
                       divisions: 14,
                       value: _cfg.narrowPeakMarginDb.clamp(1, 8),
                       label: _cfg.narrowPeakMarginDb.toStringAsFixed(1),
-                      onChanged: (v) => setState(() =>
-                          _cfg = _cfg.copyWith(narrowPeakMarginDb: v))))
+                      onChanged: (v) => setState(
+                          () => _cfg = _cfg.copyWith(narrowPeakMarginDb: v))))
             ]),
             Row(children: [
-              const SizedBox(
-                  width: 200,
-                  child: Text('Marge pic large (dB)')),
+              const SizedBox(width: 200, child: Text('Marge pic large (dB)')),
               Expanded(
                   child: Slider(
                       min: 8,
@@ -697,8 +689,8 @@ class _SpectroidSettingsPageState extends State<SpectroidSettingsPage> {
                       divisions: 12,
                       value: _cfg.widePeakMarginDb.clamp(8, 20),
                       label: _cfg.widePeakMarginDb.toStringAsFixed(1),
-                      onChanged: (v) => setState(() =>
-                          _cfg = _cfg.copyWith(widePeakMarginDb: v))))
+                      onChanged: (v) => setState(
+                          () => _cfg = _cfg.copyWith(widePeakMarginDb: v))))
             ]),
             SwitchListTile(
                 title: const Text('Rescue fondamentale (/2, /3)'),
@@ -1188,12 +1180,15 @@ class _SpectroidSettingsPageState extends State<SpectroidSettingsPage> {
           ListTile(
             title: const Text('Fichier de log du Dominant Tracker'),
             subtitle: FutureBuilder<String?>(
-              future: DebugLogger.instance.init().then((_) => DebugLogger.instance.logFilePath),
+              future: DebugLogger.instance
+                  .init()
+                  .then((_) => DebugLogger.instance.logFilePath),
               builder: (context, snapshot) {
                 if (snapshot.hasData && snapshot.data != null) {
                   return Text(
                     snapshot.data!,
-                    style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                    style:
+                        const TextStyle(fontSize: 11, fontFamily: 'monospace'),
                   );
                 }
                 return const Text('Initialisation...');
@@ -1209,7 +1204,8 @@ class _SpectroidSettingsPageState extends State<SpectroidSettingsPage> {
                   await Clipboard.setData(ClipboardData(text: path));
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Chemin copié dans le presse-papier')),
+                      const SnackBar(
+                          content: Text('Chemin copié dans le presse-papier')),
                     );
                   }
                 }

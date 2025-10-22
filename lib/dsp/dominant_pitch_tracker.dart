@@ -11,7 +11,8 @@ class PeakInfo {
   final double prominence;
   final double harmonicScore;
   final double totalScore;
-  final double spectralWidthHz; // Largeur spectrale en Hz (pic étroit vs bruit large)
+  final double
+      spectralWidthHz; // Largeur spectrale en Hz (pic étroit vs bruit large)
 
   const PeakInfo({
     required this.freq,
@@ -175,7 +176,8 @@ class DominantPitchTracker {
         _findProminentPeaks(spectrumDb, binWidth, yinHint, harmonicHint);
 
     // DIAGNOSTIC: Log current state
-    _log('[TRACKER STATE] ${_state.name.toUpperCase()}, currentF0=${_currentF0.toStringAsFixed(1)}Hz, lockTimer=$_lockTimer, unlockTimer=$_unlockTimer');
+    _log(
+        '[TRACKER STATE] ${_state.name.toUpperCase()}, currentF0=${_currentF0.toStringAsFixed(1)}Hz, lockTimer=$_lockTimer, unlockTimer=$_unlockTimer');
 
     if (_state == DominantTrackerState.search) {
       _log('[DISPATCH] Calling _processSearchState');
@@ -285,14 +287,18 @@ class DominantPitchTracker {
 
       // FUNDAMENTAL CONSENSUS BIAS: Si YIN et Fusion s'accordent sur le fondamental,
       // donner un énorme bonus au pic correspondant pour surpasser les harmoniques
-      if (yinHint != null && yinHint > 0 && harmonicHint != null && harmonicHint > 0) {
+      if (yinHint != null &&
+          yinHint > 0 &&
+          harmonicHint != null &&
+          harmonicHint > 0) {
         // Vérifier que YIN et HarmonicSalience s'accordent (< 50 cents)
-        final hintDeltaCents = 1200.0 * (math.log(yinHint / harmonicHint) / math.ln2).abs();
+        final hintDeltaCents =
+            1200.0 * (math.log(yinHint / harmonicHint) / math.ln2).abs();
         if (hintDeltaCents < 50.0) {
           // Consensus détecté, calculer la moyenne
           final consensusF0 = (yinHint + harmonicHint) / 2.0;
           final consensusRatio = interpFreq / consensusF0;
-          
+
           // Si ce pic correspond au consensus (±15%)
           if (consensusRatio > 0.85 && consensusRatio < 1.15) {
             // ÉNORME BONUS pour forcer la sélection du fondamental
@@ -311,7 +317,8 @@ class DominantPitchTracker {
       final totalScore = snr + harmonicScore + hintBias;
 
       // Calcul de la largeur spectrale (FWHM-like: bins at -3dB from peak)
-      final spectralWidth = _calculateSpectralWidth(spectrumDb, i, interpDb, binWidth);
+      final spectralWidth =
+          _calculateSpectralWidth(spectrumDb, i, interpDb, binWidth);
 
       peaks.add(PeakInfo(
         freq: interpFreq,
@@ -332,63 +339,71 @@ class DominantPitchTracker {
       _log('[BEFORE SORT] ${peaks.length} peaks:');
       for (final p in peaks) {
         // FIX: width==0.0 should be classified as NARROW (perfect tonal peak)
-        final isNarrow = p.spectralWidthHz == 0.0 || p.spectralWidthHz < narrowPeakWidthHz;
-        _log('  ${p.freq.toStringAsFixed(1)}Hz: score=${p.totalScore.toStringAsFixed(2)}, snr=${p.snr.toStringAsFixed(1)}, prom=${p.prominence.toStringAsFixed(1)}, width=${p.spectralWidthHz.toStringAsFixed(1)}Hz ${isNarrow ? '(NARROW)' : '(wide)'}');
+        final isNarrow =
+            p.spectralWidthHz == 0.0 || p.spectralWidthHz < narrowPeakWidthHz;
+        _log(
+            '  ${p.freq.toStringAsFixed(1)}Hz: score=${p.totalScore.toStringAsFixed(2)}, snr=${p.snr.toStringAsFixed(1)}, prom=${p.prominence.toStringAsFixed(1)}, width=${p.spectralWidthHz.toStringAsFixed(1)}Hz ${isNarrow ? '(NARROW)' : '(wide)'}');
       }
     }
 
     // Sort by total score with tie-breaking: prefer lower frequency for narrow peaks
     peaks.sort((a, b) {
       final scoreDiff = b.totalScore - a.totalScore;
-      
+
       // CRITICAL FIX: Reduced threshold from 2.0 to 0.5 dB
       // AND: width=0 means PERFECT peak (ultra-narrow), not wide!
       if (scoreDiff.abs() < 0.5) {
         // Classify as narrow: width=0 (perfect) OR width < 20Hz
-        final aIsNarrow = (a.spectralWidthHz == 0.0) || (a.spectralWidthHz > 0 && a.spectralWidthHz < narrowPeakWidthHz);
-        final bIsNarrow = (b.spectralWidthHz == 0.0) || (b.spectralWidthHz > 0 && b.spectralWidthHz < narrowPeakWidthHz);
-        
+        final aIsNarrow = (a.spectralWidthHz == 0.0) ||
+            (a.spectralWidthHz > 0 && a.spectralWidthHz < narrowPeakWidthHz);
+        final bIsNarrow = (b.spectralWidthHz == 0.0) ||
+            (b.spectralWidthHz > 0 && b.spectralWidthHz < narrowPeakWidthHz);
+
         if (aIsNarrow && bIsNarrow) {
           // Both are narrow tonal peaks with similar scores
           // → FAVOR LOWER FREQUENCY (probable fundamental)
           if (a.freq != b.freq) {
-            _log('[TIE-BREAK] ${a.freq.toStringAsFixed(1)}Hz (w=${a.spectralWidthHz.toStringAsFixed(1)}, s=${a.totalScore.toStringAsFixed(1)}) vs ${b.freq.toStringAsFixed(1)}Hz (w=${b.spectralWidthHz.toStringAsFixed(1)}, s=${b.totalScore.toStringAsFixed(1)}) → choosing ${a.freq < b.freq ? a.freq.toStringAsFixed(1) : b.freq.toStringAsFixed(1)}Hz (lower)');
+            _log(
+                '[TIE-BREAK] ${a.freq.toStringAsFixed(1)}Hz (w=${a.spectralWidthHz.toStringAsFixed(1)}, s=${a.totalScore.toStringAsFixed(1)}) vs ${b.freq.toStringAsFixed(1)}Hz (w=${b.spectralWidthHz.toStringAsFixed(1)}, s=${b.totalScore.toStringAsFixed(1)}) → choosing ${a.freq < b.freq ? a.freq.toStringAsFixed(1) : b.freq.toStringAsFixed(1)}Hz (lower)');
           }
           return a.freq.compareTo(b.freq); // ascending frequency order
         }
       }
-      
+
       // Otherwise, standard sort by descending score
       if (scoreDiff.abs() < 0.001) return 0; // Exactly equal
       return scoreDiff > 0 ? 1 : -1;
     });
-    
+
     // Log du résultat final du tri (top 3)
     if (peaks.isNotEmpty) {
       final top3 = peaks.take(3).toList();
-      _log('[PEAK SORT] Top 3: ${top3.map((p) => '${p.freq.toStringAsFixed(1)}Hz(s=${p.totalScore.toStringAsFixed(1)}, w=${p.spectralWidthHz.toStringAsFixed(1)})').join(', ')}');
+      _log(
+          '[PEAK SORT] Top 3: ${top3.map((p) => '${p.freq.toStringAsFixed(1)}Hz(s=${p.totalScore.toStringAsFixed(1)}, w=${p.spectralWidthHz.toStringAsFixed(1)})').join(', ')}');
     }
-    
+
     return peaks.take(5).toList();
   }
 
   /// Calcule la largeur spectrale d'un pic (en Hz) en mesurant l'étalement d'énergie
   /// Méthode: FWHM (Full Width at Half Maximum) approximée à -3dB du pic
-  double _calculateSpectralWidth(Float32List spectrumDb, int peakBin, double peakDb, double binWidth) {
+  double _calculateSpectralWidth(
+      Float32List spectrumDb, int peakBin, double peakDb, double binWidth) {
     final threshold = peakDb - 3.0; // -3dB threshold
-    
+
     // Chercher à gauche jusqu'au threshold
     int leftBin = peakBin;
     while (leftBin > 0 && spectrumDb[leftBin] > threshold) {
       leftBin--;
     }
-    
+
     // Chercher à droite jusqu'au threshold
     int rightBin = peakBin;
-    while (rightBin < spectrumDb.length - 1 && spectrumDb[rightBin] > threshold) {
+    while (
+        rightBin < spectrumDb.length - 1 && spectrumDb[rightBin] > threshold) {
       rightBin++;
     }
-    
+
     // Largeur en bins, convertie en Hz
     final widthBins = (rightBin - leftBin).toDouble();
     return widthBins * binWidth;
@@ -462,13 +477,17 @@ class DominantPitchTracker {
         bestPeak.freq >= fMin &&
         bestPeak.freq <= fMax &&
         bestPeak.prominence >= effectiveProminenceForLock;
-    
+
     // Debug validation
-    _log('[PEAK VALIDATION] bestByScore: ${bestByScore.freq.toStringAsFixed(1)}Hz (snr=${bestByScore.snr.toStringAsFixed(1)}, prom=${bestByScore.prominence.toStringAsFixed(1)}, score=${bestByScore.totalScore.toStringAsFixed(1)})');
-    _log('[PEAK VALIDATION] bestBySnr: ${bestBySnr.freq.toStringAsFixed(1)}Hz (snr=${bestBySnr.snr.toStringAsFixed(1)}, prom=${bestBySnr.prominence.toStringAsFixed(1)}, score=${bestBySnr.totalScore.toStringAsFixed(1)})');
-    _log('[PEAK VALIDATION] thresholds: lockSnr=$lockThresholdDb, prominence=$effectiveProminenceForLock');
-    _log('[PEAK VALIDATION] bestPeak (${bestPeak.freq.toStringAsFixed(1)}Hz) valid? $isPeakValid (snr=${bestPeak.snr.toStringAsFixed(1)}>=$lockThresholdDb, prom=${bestPeak.prominence.toStringAsFixed(1)}>=$effectiveProminenceForLock)');
-    
+    _log(
+        '[PEAK VALIDATION] bestByScore: ${bestByScore.freq.toStringAsFixed(1)}Hz (snr=${bestByScore.snr.toStringAsFixed(1)}, prom=${bestByScore.prominence.toStringAsFixed(1)}, score=${bestByScore.totalScore.toStringAsFixed(1)})');
+    _log(
+        '[PEAK VALIDATION] bestBySnr: ${bestBySnr.freq.toStringAsFixed(1)}Hz (snr=${bestBySnr.snr.toStringAsFixed(1)}, prom=${bestBySnr.prominence.toStringAsFixed(1)}, score=${bestBySnr.totalScore.toStringAsFixed(1)})');
+    _log(
+        '[PEAK VALIDATION] thresholds: lockSnr=$lockThresholdDb, prominence=$effectiveProminenceForLock');
+    _log(
+        '[PEAK VALIDATION] bestPeak (${bestPeak.freq.toStringAsFixed(1)}Hz) valid? $isPeakValid (snr=${bestPeak.snr.toStringAsFixed(1)}>=$lockThresholdDb, prom=${bestPeak.prominence.toStringAsFixed(1)}>=$effectiveProminenceForLock)');
+
     // If the top-by-score fails only because of SNR, try the highest-SNR candidate
     if (!isPeakValid) {
       final scoreFailsSNR = bestPeak.snr < lockThresholdDb;
@@ -552,8 +571,9 @@ class DominantPitchTracker {
     double? yinHint,
     double? harmonicHint,
   ) {
-    _log('[LOCKED STATE ENTRY] currentF0=${_currentF0.toStringAsFixed(1)}Hz, yinHint=${yinHint?.toStringAsFixed(1)}Hz, harmonicHint=${harmonicHint?.toStringAsFixed(1)}Hz');
-    
+    _log(
+        '[LOCKED STATE ENTRY] currentF0=${_currentF0.toStringAsFixed(1)}Hz, yinHint=${yinHint?.toStringAsFixed(1)}Hz, harmonicHint=${harmonicHint?.toStringAsFixed(1)}Hz');
+
     // Update averaged f0 anchor (EMA ~0.5s)
     if (_currentF0 > 0) {
       final k = (deltaTimeS / avgF0TimeConstantS).clamp(0.0, 1.0);
@@ -569,16 +589,19 @@ class DominantPitchTracker {
         harmonicHint > 0) {
       final avgHint = (yinHint + harmonicHint) / 2.0;
       final currentRatio = _currentF0 / avgHint;
-      _log('[OCTAVE CHECK] currentF0=${_currentF0.toStringAsFixed(1)}, avgHint=${avgHint.toStringAsFixed(1)}, ratio=${currentRatio.toStringAsFixed(2)}');
+      _log(
+          '[OCTAVE CHECK] currentF0=${_currentF0.toStringAsFixed(1)}, avgHint=${avgHint.toStringAsFixed(1)}, ratio=${currentRatio.toStringAsFixed(2)}');
 
-      _log('[OCTAVE CHECK] currentF0=${_currentF0.toStringAsFixed(1)}, avgHint=${avgHint.toStringAsFixed(1)}, ratio=${currentRatio.toStringAsFixed(2)}');
+      _log(
+          '[OCTAVE CHECK] currentF0=${_currentF0.toStringAsFixed(1)}, avgHint=${avgHint.toStringAsFixed(1)}, ratio=${currentRatio.toStringAsFixed(2)}');
 
       // Si on est locké sur une octave supérieure (×1.8 à ×2.2) et les hints convergent vers fondamental
       if (currentRatio > 1.8 && currentRatio < 2.2) {
         // Vérifier que les hints sont cohérents entre eux (moins de 50 cents d'écart)
         final hintDeltaCents =
             1200.0 * (math.log(yinHint / harmonicHint) / math.ln2).abs();
-        _log('[OCTAVE CORRECTION CHECK] hintDeltaCents=${hintDeltaCents.toStringAsFixed(1)} (threshold=50.0)');
+        _log(
+            '[OCTAVE CORRECTION CHECK] hintDeltaCents=${hintDeltaCents.toStringAsFixed(1)} (threshold=50.0)');
         if (hintDeltaCents < 50.0) {
           // Force unlock pour permettre correction vers le fondamental
           _state = DominantTrackerState.search;
@@ -637,28 +660,36 @@ class DominantPitchTracker {
     // NOUVELLE LOGIQUE: Compétition par niveau absolu avec discrimination spectrale
     // Si un pic HORS fenêtre est significativement plus fort que tout pic DANS la fenêtre,
     // forcer un unlock immédiat pour permettre le switch
-    final outsideCandidates = peaks.where((p) => p.freq < fLow || p.freq > fHigh).toList();
-    
-    _log('[LOCKED WINDOW] fLow=${fLow.toStringAsFixed(1)}, fHigh=${fHigh.toStringAsFixed(1)}, inside=${candidates.length}, outside=${outsideCandidates.length}');
-    
+    final outsideCandidates =
+        peaks.where((p) => p.freq < fLow || p.freq > fHigh).toList();
+
+    _log(
+        '[LOCKED WINDOW] fLow=${fLow.toStringAsFixed(1)}, fHigh=${fHigh.toStringAsFixed(1)}, inside=${candidates.length}, outside=${outsideCandidates.length}');
+
     if (outsideCandidates.isNotEmpty && candidates.isNotEmpty) {
-      final strongestOutside = outsideCandidates.reduce((a, b) => a.dbLevel > b.dbLevel ? a : b);
-      final strongestInside = candidates.reduce((a, b) => a.dbLevel > b.dbLevel ? a : b);
-      
+      final strongestOutside =
+          outsideCandidates.reduce((a, b) => a.dbLevel > b.dbLevel ? a : b);
+      final strongestInside =
+          candidates.reduce((a, b) => a.dbLevel > b.dbLevel ? a : b);
+
       final levelDiff = strongestOutside.dbLevel - strongestInside.dbLevel;
-      
+
       // MODIFICATION CRITIQUE: Comparer SCORE (qui inclut consensus bias) au lieu de SNR brut
       // Car le SNR brut ne reflète pas le bonus de consensus fondamental
-      final scoreDiff = strongestOutside.totalScore - strongestInside.totalScore;
+      final scoreDiff =
+          strongestOutside.totalScore - strongestInside.totalScore;
       final snrDiff = strongestOutside.snr - strongestInside.snr;
-      
-      _log('[COMPETITOR CHECK] Outside: ${strongestOutside.freq.toStringAsFixed(1)}Hz (score=${strongestOutside.totalScore.toStringAsFixed(1)}, snr=${strongestOutside.snr.toStringAsFixed(1)}, width=${strongestOutside.spectralWidthHz.toStringAsFixed(1)}Hz)');
-      _log('[COMPETITOR CHECK] Inside: ${strongestInside.freq.toStringAsFixed(1)}Hz (score=${strongestInside.totalScore.toStringAsFixed(1)}, snr=${strongestInside.snr.toStringAsFixed(1)}, width=${strongestInside.spectralWidthHz.toStringAsFixed(1)}Hz)');
-      _log('[COMPETITOR CHECK] levelDiff=${levelDiff.toStringAsFixed(1)}dB, snrDiff=${snrDiff.toStringAsFixed(1)}dB, scoreDiff=${scoreDiff.toStringAsFixed(1)}dB (positive=outside better)');
-      
+
+      _log(
+          '[COMPETITOR CHECK] Outside: ${strongestOutside.freq.toStringAsFixed(1)}Hz (score=${strongestOutside.totalScore.toStringAsFixed(1)}, snr=${strongestOutside.snr.toStringAsFixed(1)}, width=${strongestOutside.spectralWidthHz.toStringAsFixed(1)}Hz)');
+      _log(
+          '[COMPETITOR CHECK] Inside: ${strongestInside.freq.toStringAsFixed(1)}Hz (score=${strongestInside.totalScore.toStringAsFixed(1)}, snr=${strongestInside.snr.toStringAsFixed(1)}, width=${strongestInside.spectralWidthHz.toStringAsFixed(1)}Hz)');
+      _log(
+          '[COMPETITOR CHECK] levelDiff=${levelDiff.toStringAsFixed(1)}dB, snrDiff=${snrDiff.toStringAsFixed(1)}dB, scoreDiff=${scoreDiff.toStringAsFixed(1)}dB (positive=outside better)');
+
       // Calculer la marge requise en fonction de la largeur spectrale du compétiteur
       double requiredMargin = narrowPeakMarginDb; // Default pour pics étroits
-      
+
       if (strongestOutside.spectralWidthHz > 0) {
         if (strongestOutside.spectralWidthHz < narrowPeakWidthHz) {
           // Pic étroit (note tonale) → marge faible = unlock rapide
@@ -668,15 +699,16 @@ class DominantPitchTracker {
           requiredMargin = widePeakMarginDb;
         } else {
           // Interpolation linéaire entre narrow et wide
-          final ratio = (strongestOutside.spectralWidthHz - narrowPeakWidthHz) / 
-                       (widePeakWidthHz - narrowPeakWidthHz);
-          requiredMargin = narrowPeakMarginDb + 
-                          ratio * (widePeakMarginDb - narrowPeakMarginDb);
+          final ratio = (strongestOutside.spectralWidthHz - narrowPeakWidthHz) /
+              (widePeakWidthHz - narrowPeakWidthHz);
+          requiredMargin = narrowPeakMarginDb +
+              ratio * (widePeakMarginDb - narrowPeakMarginDb);
         }
       }
-      
-      _log('[COMPETITOR CHECK] requiredMargin=${requiredMargin.toStringAsFixed(1)}dB');
-      
+
+      _log(
+          '[COMPETITOR CHECK] requiredMargin=${requiredMargin.toStringAsFixed(1)}dB');
+
       // UTILISER SCORE DIFF (qui inclut consensus bias) au lieu de SNR brut
       // Car le consensus bias favorise la fondamentale dans le score
       if (scoreDiff > requiredMargin) {
@@ -684,7 +716,7 @@ class DominantPitchTracker {
         _unlockTimer = 0;
         _lockTimer = 0;
         _jumpTimer = 0;
-        _lastLockReason = 
+        _lastLockReason =
             "FORCE UNLOCK: Outside peak ${strongestOutside.freq.toStringAsFixed(1)}Hz has ${scoreDiff.toStringAsFixed(1)}dB better SCORE (snr diff=${snrDiff.toStringAsFixed(1)}dB, width=${strongestOutside.spectralWidthHz.toStringAsFixed(1)}Hz, margin=${requiredMargin.toStringAsFixed(1)}dB)";
         _log('[FORCE UNLOCK] ${_lastLockReason}');
         return DominantPitchResult(
@@ -742,7 +774,7 @@ class DominantPitchTracker {
       // Si c'est un pic large (bruit), on tolère davantage
       double effectiveJumpThreshold = 100.0; // Default 100 cents
       double effectiveJumpDelayMs = 200.0; // Default 200 ms
-      
+
       if (selectedPeak.spectralWidthHz > 0) {
         if (selectedPeak.spectralWidthHz < narrowPeakWidthHz) {
           // Pic étroit = note tonale précise → unlock rapide
@@ -765,8 +797,8 @@ class DominantPitchTracker {
           _unlockTimer = 0;
           _lockTimer = 0;
           _jumpTimer = 0;
-          final widthInfo = selectedPeak.spectralWidthHz > 0 
-              ? " (width=${selectedPeak.spectralWidthHz.toStringAsFixed(1)}Hz)" 
+          final widthInfo = selectedPeak.spectralWidthHz > 0
+              ? " (width=${selectedPeak.spectralWidthHz.toStringAsFixed(1)}Hz)"
               : "";
           _lastLockReason =
               "FORCE UNLOCK: Jump ${deltaCentsFromCurrent.toStringAsFixed(0)} cents for ${_jumpTimer}ms$widthInfo";
@@ -1143,4 +1175,3 @@ class DominantPitchTracker {
     return sum / count;
   }
 }
-

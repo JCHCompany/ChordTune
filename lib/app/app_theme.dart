@@ -4,6 +4,44 @@ import 'package:flutter/material.dart';
 
 const _navyHeader = Color(0xFF202938);
 
+/// Theme extension for the tuner gauge (colors kept centralized)
+@immutable
+class TunerTheme extends ThemeExtension<TunerTheme> {
+  final Color gold; // main gauge color
+  final Color green; // within tolerance
+  final Color red; // hard limit / error
+  final double haloOpacity; // subtle halo opacity around labels/arc
+
+  const TunerTheme({
+    required this.gold,
+    required this.green,
+    required this.red,
+    this.haloOpacity = 0.12,
+  });
+
+  @override
+  TunerTheme copyWith(
+      {Color? gold, Color? green, Color? red, double? haloOpacity}) {
+    return TunerTheme(
+      gold: gold ?? this.gold,
+      green: green ?? this.green,
+      red: red ?? this.red,
+      haloOpacity: haloOpacity ?? this.haloOpacity,
+    );
+  }
+
+  @override
+  ThemeExtension<TunerTheme> lerp(ThemeExtension<TunerTheme>? other, double t) {
+    if (other is! TunerTheme) return this;
+    return TunerTheme(
+      gold: Color.lerp(gold, other.gold, t) ?? gold,
+      green: Color.lerp(green, other.green, t) ?? green,
+      red: Color.lerp(red, other.red, t) ?? red,
+      haloOpacity: haloOpacity + (other.haloOpacity - haloOpacity) * t,
+    );
+  }
+}
+
 // LIGHT ColorScheme
 const _lightScheme = ColorScheme(
   brightness: Brightness.light,
@@ -31,6 +69,15 @@ const _lightScheme = ColorScheme(
 final ThemeData lightTheme = ThemeData(
   useMaterial3: true,
   colorScheme: _lightScheme,
+  extensions: const [
+    // Gold tuned for good contrast on light surfaces
+    TunerTheme(
+      gold: Color(0xFFB38600), // warm gold
+      green: Color(0xFF2E7D32),
+      red: Color(0xFFE53935),
+      haloOpacity: 0.12,
+    ),
+  ],
   appBarTheme: const AppBarTheme(
     backgroundColor: _navyHeader,
     foregroundColor: Colors.white,
@@ -74,6 +121,15 @@ const _darkScheme = ColorScheme(
 final ThemeData darkTheme = ThemeData(
   useMaterial3: true,
   colorScheme: _darkScheme,
+  extensions: const [
+    // Slightly brighter gold for dark mode
+    TunerTheme(
+      gold: Color(0xFFE6B85C),
+      green: Color(0xFF66BB6A),
+      red: Color(0xFFF97066),
+      haloOpacity: 0.18,
+    ),
+  ],
   appBarTheme: AppBarTheme(
     backgroundColor: _darkScheme.surfaceContainer,
     foregroundColor: _darkScheme.onSurface,

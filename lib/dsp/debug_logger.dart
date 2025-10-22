@@ -27,13 +27,13 @@ class DebugLogger {
       } else {
         directory = await getApplicationDocumentsDirectory();
       }
-      
+
       if (directory == null) {
         throw Exception('Unable to get storage directory');
       }
-      
+
       _logFile = File('${directory.path}/dominant_tracker_debug.log');
-      
+
       // Écrit l'en-tête du fichier
       await _logFile!.writeAsString(
         '=== DOMINANT PITCH TRACKER DEBUG LOG ===\n'
@@ -42,7 +42,7 @@ class DebugLogger {
         '=========================================\n\n',
         mode: FileMode.write,
       );
-      
+
       _initialized = true;
       print('═══════════════════════════════════════════════════════');
       print('DEBUG LOG ENABLED');
