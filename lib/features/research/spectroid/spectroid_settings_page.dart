@@ -560,6 +560,21 @@ class _SpectroidSettingsPageState extends State<SpectroidSettingsPage> {
             ]),
             Row(children: [
               const SizedBox(
+                  width: 200, child: Text('Seuil bruit diffus (% bins)')),
+              Expanded(
+                  child: Slider(
+                      min: 0.10,
+                      max: 0.50,
+                      divisions: 40,
+                      value:
+                          _cfg.transientDiffuseThresholdRatio.clamp(0.10, 0.50),
+                      label:
+                          '${(_cfg.transientDiffuseThresholdRatio * 100).toStringAsFixed(0)}%',
+                      onChanged: (v) => setState(() => _cfg =
+                          _cfg.copyWith(transientDiffuseThresholdRatio: v))))
+            ]),
+            Row(children: [
+              const SizedBox(
                   width: 160, child: Text('Fenêtre de capture (cents)')),
               Expanded(
                   child: Slider(
@@ -993,6 +1008,22 @@ class _SpectroidSettingsPageState extends State<SpectroidSettingsPage> {
                   label: _cfg.emaAlphaAmp.toStringAsFixed(2),
                   onChanged: (v) =>
                       setState(() => _cfg = _cfg.copyWith(emaAlphaAmp: v)),
+                ),
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              const SizedBox(width: 160, child: Text('EMA LOCKED (α)')),
+              Expanded(
+                child: Slider(
+                  value: _cfg.emaAlphaLocked,
+                  min: 0.0,
+                  max: 0.99,
+                  divisions: 99,
+                  label: _cfg.emaAlphaLocked.toStringAsFixed(2),
+                  onChanged: (v) =>
+                      setState(() => _cfg = _cfg.copyWith(emaAlphaLocked: v)),
                 ),
               ),
             ],

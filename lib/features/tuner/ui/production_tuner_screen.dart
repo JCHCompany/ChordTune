@@ -6,7 +6,8 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../research/spectroid/spectroid_cubit.dart';
 import '../../../app/l10n/l10n.dart';
 import '../../../dsp/dominant_pitch_tracker.dart';
-import '../widgets/tuner_needle_gauge.dart';
+// Replaced needle gauge with a flat bar
+import '../widgets/tuner_flat_bar.dart';
 import '../../../app/app_theme.dart';
 
 /// État stable d'une note détectée
@@ -90,6 +91,9 @@ class _ProductionTunerScreenState extends State<ProductionTunerScreen> {
   bool _showLockDisplay = false; // green frame overlay (immediate)
   DateTime _lastLockTime =
       DateTime.fromMillisecondsSinceEpoch(0); // pour maintien 200ms
+  // Sticky target while locked (ensures UI shows exactly what is locked)
+  String? _lockedLabel; // E2/A2/... or chromatic note name
+  double? _lockedTargetHz; // exact target frequency used for cents
 
   // Smoothing/quantization state
   double _errS = 0.0; // smoothed cents error
@@ -161,6 +165,8 @@ class _ProductionTunerScreenState extends State<ProductionTunerScreen> {
           _isLocked = false;
           _showLockDisplay = false;
           _displayedNote = null;
+          _lockedLabel = null;
+          _lockedTargetHz = null;
           // Stop all animations when stability is lost
           _fillStartAt = null;
           _fillProgress = 0.0;
@@ -180,38 +186,22 @@ class _ProductionTunerScreenState extends State<ProductionTunerScreen> {
         // Transition to locked -> show immediately
         _isLocked = true;
         _showLockDisplay = true;
+        // Capture sticky target at lock time (chromatic or guided)
+  final lockedTarget = _chooseTargetFor(f0);
+  _lockedLabel = lockedTarget.label;
+  _lockedTargetHz = lockedTarget.freq;
       }
     }
 
-    // Choose comparison target and label
-    String noteName;
-    double fTarget;
-    if (_guidanceEnabled && _guidedTargets.isNotEmpty) {
-      // Compare to nearest guided target of the selected tuning
-      _GuidedTarget best = _guidedTargets.first;
-      double bestDiff = (f0 - best.freq).abs();
-      for (final t in _guidedTargets) {
-        final d = (f0 - t.freq).abs();
-        if (d < bestDiff) {
-          best = t;
-          bestDiff = d;
-        }
-      }
-      noteName = best.label;
-      fTarget = best.freq;
-    } else {
-      // Default chromatic nearest semitone
-      final noteInfo = _PitchConverter.frequencyToNote(f0);
-      noteName = '${noteInfo['name']}${noteInfo['octave']}';
-      final int midiRounded = noteInfo['midiNote'] as int;
-      fTarget = 440.0 * math.pow(2.0, (midiRounded - 69) / 12.0).toDouble();
-    }
+    // Use sticky locked target while locked to ensure consistency
+  final String noteName = _lockedLabel ?? _chooseTargetFor(f0).label;
+  final double fTarget = _lockedTargetHz ?? _chooseTargetFor(f0).freq;
     // error in cents vs selected target
     final errCents = 1200.0 * (math.log(f0 / fTarget) / math.ln2);
-    
+
     // Détection de changement de note pour reset du lissage
     final noteChanged = _lastNoteName != null && _lastNoteName != noteName;
-    
+
     // RESET du lissage lors du premier lock ou changement de note
     // pour convergence immédiate au lieu de partir de 0
     if (_lastNoteName == null || noteChanged) {
@@ -322,14 +312,17 @@ class _ProductionTunerScreenState extends State<ProductionTunerScreen> {
           } else {
             _noteExitZoneAt[noteName] ??= now;
             final exitedAt = _noteExitZoneAt[noteName]!;
-            if (now.difference(exitedAt).inMilliseconds >= 500) {
-              _noteTuned[noteName] = false; // revert after 0.5s detuned
+            final wasTuned = _noteTuned[noteName] == true;
+            final detachThresholdMs = wasTuned ? 700 : 500; // requirement: 0.7s if already tuned
+            if (now.difference(exitedAt).inMilliseconds >= detachThresholdMs) {
+              _noteTuned[noteName] = false; // revert after threshold detuned
               _noteEnterZoneAt.remove(noteName);
             }
           }
 
           // Update filling progress (kept, but does not gate display)
-          final bool nearTarget = _qDisplay.abs() <= 1; // 0 or 1 step
+          // Start/maintain 2s stability fill only while in-zone (±2 cents)
+          final bool nearTarget = inZone;
           if (_isTuned) {
             _fillProgress = 1.0;
           } else if (nearTarget) {
@@ -401,12 +394,38 @@ class _ProductionTunerScreenState extends State<ProductionTunerScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // Semicircle gauge; when not locked, shows mic+dots
+                        // Fixed-area header: Big note OR mic icon, with optional 2s stability ring
+                        SizedBox(
+                          height: 120,
+                          child: Center(
+                            child: _isLocked && _displayedNote != null
+                                ? _BigNoteWithRing(
+                                    label: _displayedNote!.noteName,
+                                    progress: !_isTuned ? _fillProgress : 1.0,
+                                  )
+                                : _MicWithDots(),
+                          ),
+                        ),
+                        
+                        // Cents deviation display - Below note, above gauge
+                        if (_isLocked && _displayedNote != null)
+                          SizedBox(
+                            height: 64,
+                            child: Padding(
+                              padding: const EdgeInsets.only(bottom: 8.0),
+                              child: _buildCentsDisplay(context, _displayedNote!.cents),
+                            ),
+                          )
+                        else
+                          const SizedBox(height: 64),
+                        
+                        // Flat bar with 2-cent graduations (-50..+50)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 20.0),
-                          child: TunerNeedleGauge(
+                          child: TunerFlatBar(
                             cents: _isLocked ? _displayedNote?.cents : null,
-                            size: MediaQuery.of(context).size.width * 0.9,
+                            width: MediaQuery.of(context).size.width * 0.9,
+                            height: 80,
                           ),
                         ),
                         _ChordRowTuner(
@@ -426,6 +445,62 @@ class _ProductionTunerScreenState extends State<ProductionTunerScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  /// Affiche la déviation en cents avec code couleur selon les recommandations UX :
+  /// - Vert : ±5 cents (bien accordé)
+  /// - Ambre : ±5-10 cents (acceptable, à ajuster)
+  /// - Rouge : >±10 cents (mal accordé)
+  Widget _buildCentsDisplay(BuildContext context, double cents) {
+    final theme = Theme.of(context);
+    final tTheme = theme.extension<TunerTheme>();
+    
+    // Déterminer la couleur selon les seuils recommandés
+    Color textColor;
+    String statusText;
+    if (cents.abs() <= 5.0) {
+      // Zone verte : bien accordé (±5 cents)
+      textColor = tTheme?.green ?? Colors.green;
+      statusText = cents.abs() <= 2.0 ? 'Parfait' : 'Bon';
+    } else if (cents.abs() <= 10.0) {
+      // Zone ambre : acceptable (±5-10 cents)
+      textColor = Colors.amber.shade700;
+      statusText = 'À ajuster';
+    } else {
+      // Zone rouge : mal accordé (>±10 cents)
+      textColor = tTheme?.red ?? Colors.red;
+      statusText = 'Désaccordé';
+    }
+    
+  // Formatage avec signe explicite, sans signe pour 0
+  final int r = cents.round();
+  final String centsText = (r == 0)
+    ? '0'
+    : (r > 0 ? '+${r.toString()}' : r.toString());
+    
+    return Column(
+      children: [
+        // Cents value - Large and colored
+        Text(
+          '$centsText¢',
+          style: TextStyle(
+            fontSize: 36,
+            fontWeight: FontWeight.bold,
+            color: textColor,
+            letterSpacing: 1,
+          ),
+        ),
+        // Status text - Small subtitle
+        Text(
+          statusText,
+          style: TextStyle(
+            fontSize: 14,
+            color: textColor.withOpacity(0.8),
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
     );
   }
 
@@ -578,6 +653,170 @@ class _ProductionTunerScreenState extends State<ProductionTunerScreen> {
       pitchFMax: pitchFMax,
     ));
   }
+
+  /// Choisit la cible d'affichage (label + fréquence) pour un f0 donné.
+  /// - Si guidage actif: note guidée la plus proche
+  /// - Sinon: note chromatique la plus proche
+  /// Retourne (label, freqHz)
+  ({String label, double freq}) _chooseTargetFor(double f0) {
+    if (_guidanceEnabled && _guidedTargets.isNotEmpty) {
+      _GuidedTarget best = _guidedTargets.first;
+      double bestDiff = (f0 - best.freq).abs();
+      for (final t in _guidedTargets) {
+        final d = (f0 - t.freq).abs();
+        if (d < bestDiff) {
+          best = t;
+          bestDiff = d;
+        }
+      }
+      return (label: best.label, freq: best.freq);
+    } else {
+      final noteInfo = _PitchConverter.frequencyToNote(f0);
+      final label = '${noteInfo['name']}${noteInfo['octave']}';
+      final int midiRounded = noteInfo['midiNote'] as int;
+      final fTarget =
+          440.0 * math.pow(2.0, (midiRounded - 69) / 12.0).toDouble();
+      return (label: label, freq: fTarget);
+    }
+  }
+
+}
+
+/// Big note label with optional green progress ring (2s stability animation)
+class _BigNoteWithRing extends StatelessWidget {
+  final String label;
+  // 0..1 progress; 0=no ring, 1=full ring (tuned)
+  final double progress;
+  const _BigNoteWithRing({required this.label, required this.progress});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tTheme = theme.extension<TunerTheme>();
+    final gold = tTheme?.gold ?? theme.colorScheme.secondary;
+    final green = tTheme?.green ?? Colors.green;
+
+    return SizedBox(
+      width: 220,
+      height: 112,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // Progress ring when stabilizing or tuned
+          if (progress > 0)
+            CustomPaint(
+              size: const Size(108, 108),
+              painter: _BigRingPainter(
+                progress: progress.clamp(0.0, 1.0),
+                color: green,
+                strokeWidth: 6.0,
+              ),
+            ),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 72,
+              fontWeight: FontWeight.bold,
+              color: gold,
+              letterSpacing: 2,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BigRingPainter extends CustomPainter {
+  final double progress;
+  final Color color;
+  final double strokeWidth;
+  _BigRingPainter({required this.progress, required this.color, this.strokeWidth = 4.0});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Rect.fromLTWH(0, 0, size.width, size.height);
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+    const start = -3.14159 / 2; // top
+    final sweep = 2 * 3.14159 * progress;
+    canvas.drawArc(rect, start, sweep, false, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _BigRingPainter oldDelegate) => oldDelegate.progress != progress || oldDelegate.color != color;
+}
+
+/// Mic with three animated dots below (shown when not locked)
+class _MicWithDots extends StatefulWidget {
+  @override
+  State<_MicWithDots> createState() => _MicWithDotsState();
+}
+
+class _MicWithDotsState extends State<_MicWithDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tTheme = theme.extension<TunerTheme>();
+    final gold = tTheme?.gold ?? theme.colorScheme.secondary;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.mic_none, size: 72, color: gold),
+        const SizedBox(height: 6),
+        SizedBox(
+          height: 10,
+          width: 44,
+          child: AnimatedBuilder(
+            animation: _ctrl,
+            builder: (context, _) {
+              // Three dots with phase shift
+              double v(int i) => (0.5 + 0.5 *
+                      math.sin(2 * math.pi * (_ctrl.value + i / 3)))
+                  .clamp(0.0, 1.0);
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: List.generate(3, (i) {
+                  return Opacity(
+                    opacity: v(i),
+                    child: Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: gold,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  );
+                }),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 /// Horizontal chord row with always-visible notes and tuned state
@@ -613,16 +852,26 @@ class _ChordRowTuner extends StatelessWidget {
     // Compute nearest label and precise cents error
     String? activeLabel;
     if (display != null) {
-      _GuidedTarget best = notes.first;
-      double bestDiff = (display!.frequency - best.freq).abs();
-      for (final t in notes) {
-        final d = (display!.frequency - t.freq).abs();
-        if (d < bestDiff) {
-          best = t;
-          bestDiff = d;
+      // Si l'étiquette affichée correspond à une cible guidée, l'utiliser
+      final match = notes.firstWhere(
+        (t) => t.label == display!.noteName,
+        orElse: () => notes.first,
+      );
+      if (match.label == display!.noteName) {
+        activeLabel = match.label;
+      } else {
+        // Sinon, fallback sur la cible la plus proche en fréquence
+        _GuidedTarget best = notes.first;
+        double bestDiff = (display!.frequency - best.freq).abs();
+        for (final t in notes) {
+          final d = (display!.frequency - t.freq).abs();
+          if (d < bestDiff) {
+            best = t;
+            bestDiff = d;
+          }
         }
+        activeLabel = best.label;
       }
-      activeLabel = best.label;
     }
 
     return Padding(

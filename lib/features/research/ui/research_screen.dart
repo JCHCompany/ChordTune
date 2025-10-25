@@ -211,6 +211,25 @@ class _ResearchScreenState extends State<ResearchScreen> {
                                 style: const TextStyle(
                                     color: Colors.white60, fontSize: 9),
                               ),
+                            // EMA Alpha display - shows freeze state
+                            const SizedBox(height: 4),
+                            Builder(
+                              builder: (context) {
+                                final alpha = cfg.emaAlphaAmp;
+                                final isFrozen = alpha < 0.1;
+                                return Text(
+                                  'EMA α: ${alpha.toStringAsFixed(3)}${isFrozen ? ' ⚠️ FREEZE' : ''}',
+                                  style: TextStyle(
+                                      color: isFrozen
+                                          ? Colors.red
+                                          : Colors.white60,
+                                      fontSize: 10,
+                                      fontWeight: isFrozen
+                                          ? FontWeight.bold
+                                          : FontWeight.normal),
+                                );
+                              },
+                            ),
                           ],
                         ),
                       ),

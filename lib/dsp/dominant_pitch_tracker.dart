@@ -66,7 +66,7 @@ class DominantPitchTracker {
   final double peakProminenceDb;
   final int neighborSpanBins;
   // Competitor margin control
-  double competitorMarginBaseDb = 8.0; // default equivalent to legacy
+  double competitorMarginBaseDb = 15.0; // Augmenté de 8.0 à 15.0 pour tolérer les taps
   double competitorMarginAdaptiveSlope = 0.2; // dB per dB SNR shortfall
   // Spectral width discrimination (narrow tonal vs wide noise)
   double narrowPeakWidthHz = 20.0; // Threshold for narrow peaks (Hz)
@@ -74,13 +74,21 @@ class DominantPitchTracker {
   double narrowPeakMarginDb = 3.0; // Low margin for narrow peaks (fast unlock)
   double widePeakMarginDb = 12.0; // High margin for wide peaks (tolerated)
   // Locked-state persistence: do not unlock until SNR is below this relative floor
-  double lockedSnrFloorDb = -128.0;
+  double lockedSnrFloorDb = 5.0; // SNR minimum en mode locked (était 2.0)
   // Last known local noise floor (for debug propagation)
   double _lastLocalNoiseFloorDb = 0.0;
 
+  // HYPER-STABLE MODE: Résistance aux faux unlocks sur notes stables
+  // Synchronisé avec le délai EMA (1000ms) : après ce délai, spectre gelé = ignore les taps
+  int stableLockThresholdMs = 1000; // Durée pour être considéré "stable" (sync avec EMA delay)
+  double freshAttackSnrDb =
+      50.0; // SNR requis pour une VRAIE nouvelle attaque (était 35.0, augmenté pour ignorer taps)
+
   // Transient guard (broadband clap/tap protection)
-  double transientThresholdDb = 6.0; // average band dB jump to trigger freeze
-  int transientFreezeDurationMs = 250; // freeze unlock for this duration
+  double transientThresholdDb =
+      4.0; // Seuil réduit : 4 dB jump détecte plus de transitoires
+  int transientFreezeDurationMs =
+      400; // Augmenté : freeze pendant 400 ms au lieu de 250 ms
   int _transientGuardMs = 0; // remaining freeze time
   double _lastBandAvgDb = -120.0; // last average dB over band
 
@@ -144,6 +152,8 @@ class DominantPitchTracker {
     double? yinHint, // Indice de YIN pour éviter octave errors
     double? harmonicHint, // Indice d'harmonic salience
     double? localNoiseFloorDb, // Optional: local noise floor around band
+    bool externalTransientDetected =
+        false, // Force transient freeze from external detector
   }) {
     final deltaTimeS = frameDurationMs / 1000.0;
     if (localNoiseFloorDb != null) {
@@ -151,14 +161,21 @@ class DominantPitchTracker {
     }
 
     // Compute average dB over analysis band to detect broadband transients
+    // DÉSACTIVÉ en mode LOCKED : l'EMA bas gère déjà le bruit
     final bandAvgDb = _computeBandAvgDb(spectrumDb, binWidth);
-    if (_lastBandAvgDb > -200.0) {
+    if (_lastBandAvgDb > -200.0 && _state == DominantTrackerState.search) {
       final jump = bandAvgDb - _lastBandAvgDb;
-      if (jump >= transientThresholdDb) {
+      if (jump >= transientThresholdDb || externalTransientDetected) {
         _transientGuardMs = transientFreezeDurationMs; // activate freeze
+        // ignore: avoid_print
+        print(
+            '⚡ TRANSIENT détecté: ${jump.toStringAsFixed(1)} dB jump${externalTransientDetected ? ' (externe)' : ''}, freeze pendant ${transientFreezeDurationMs}ms');
       } else {
         _transientGuardMs = math.max(0, _transientGuardMs - frameDurationMs);
       }
+    } else if (_state == DominantTrackerState.locked) {
+      // En mode LOCKED, on ignore les transients (géré par EMA bas)
+      _transientGuardMs = 0;
     }
     _lastBandAvgDb = bandAvgDb;
 
@@ -257,64 +274,48 @@ class DominantPitchTracker {
           _calculateHarmonicScore(spectrumDb, binWidth, interpFreq);
 
       // HINTS OPTIONNELS: Bonus seulement si hints disponibles, pas de pénalité sinon
-      double hintBias = 0.0;
+      // PRINCIPE PHYSIQUE PRO: La fondamentale est TOUJOURS la plus basse fréquence
+      // de la série harmonique. Au lieu de bidouiller avec des bonus/pénalités,
+      // on donne un bonus massif au pic le plus bas qui a des harmoniques confirmés.
+      double fundamentalBias = 0.0;
 
+      // Vérifier si ce pic a des harmoniques confirmés dans le spectre
+      final hasStrongHarmonics = _hasConfirmedHarmonics(
+        spectrumDb,
+        interpFreq,
+        binWidth,
+        minHarmonics: 2, // au moins 2 harmoniques confirmés
+        harmonicThresholdDb:
+            -15.0, // harmoniques doivent être au-dessus du bruit
+      );
+
+      if (hasStrongHarmonics) {
+        // Fondamental favorisé: augmenter le bonus pour mieux capter f0 à l'attaque
+        // Bonus croissant pour fréquences basses (guitare: E2..E4)
+        final freqNorm = (interpFreq - fMin) / (fMax - fMin); // 0..1
+        fundamentalBias = 12.0 * (1.0 - freqNorm); // max ~12 dB sur graves
+      } else {
+        // Harmonique isolé: pénalité un peu plus forte
+        fundamentalBias = -8.0;
+      }
+
+      // Léger bonus si proche des hints YIN/Fusion (mais pas dominant)
+      double hintBias = 0.0;
       if (yinHint != null && yinHint > 0) {
         final yinRatio = interpFreq / yinHint;
-        if (yinRatio > 0.8 && yinRatio < 1.25) {
-          hintBias += 4.0; // BONUS modéré si proche de YIN (was 8.0)
-        } else if (yinRatio > 1.8 && yinRatio < 2.2) {
-          hintBias -= 2.0; // PÉNALITÉ réduite si octave de YIN (was 5.0)
-        } else if (yinRatio > 2.8 && yinRatio < 3.2) {
-          hintBias -= 2.0; // PÉNALITÉ réduite si triple harmonique (was 6.0)
-        } else if (yinRatio > 3.8 && yinRatio < 4.2) {
-          hintBias -= 2.0; // PÉNALITÉ réduite si 4e harmonique (was 7.0)
+        if (yinRatio > 0.85 && yinRatio < 1.15) {
+          hintBias += 3.0; // petit bonus de confirmation
         }
       }
       if (harmonicHint != null && harmonicHint > 0) {
         final harmRatio = interpFreq / harmonicHint;
-        if (harmRatio > 0.8 && harmRatio < 1.25) {
-          hintBias += 3.0; // BONUS modéré si proche d'Harmonic (was 6.0)
-        } else if (harmRatio > 1.8 && harmRatio < 2.2) {
-          hintBias -= 1.0; // PÉNALITÉ très réduite si octave (was 3.0)
-        } else if (harmRatio > 2.8 && harmRatio < 3.2) {
-          hintBias -=
-              1.0; // PÉNALITÉ très réduite si triple harmonique (was 4.0)
-        } else if (harmRatio > 3.8 && harmRatio < 4.2) {
-          hintBias -= 1.0; // PÉNALITÉ très réduite si 4e harmonique (was 5.0)
+        if (harmRatio > 0.85 && harmRatio < 1.15) {
+          hintBias += 2.0; // petit bonus de confirmation
         }
       }
 
-      // FUNDAMENTAL CONSENSUS BIAS: Si YIN et Fusion s'accordent sur le fondamental,
-      // donner un énorme bonus au pic correspondant pour surpasser les harmoniques
-      if (yinHint != null &&
-          yinHint > 0 &&
-          harmonicHint != null &&
-          harmonicHint > 0) {
-        // Vérifier que YIN et HarmonicSalience s'accordent (< 50 cents)
-        final hintDeltaCents =
-            1200.0 * (math.log(yinHint / harmonicHint) / math.ln2).abs();
-        if (hintDeltaCents < 50.0) {
-          // Consensus détecté, calculer la moyenne
-          final consensusF0 = (yinHint + harmonicHint) / 2.0;
-          final consensusRatio = interpFreq / consensusF0;
-
-          // Si ce pic correspond au consensus (±15%)
-          if (consensusRatio > 0.85 && consensusRatio < 1.15) {
-            // ÉNORME BONUS pour forcer la sélection du fondamental
-            hintBias += 15.0; // +15 dB équivalent surpasse tout harmonique
-          }
-          // Si ce pic est un harmonique du consensus, pénalité forte
-          else if (consensusRatio > 1.85 && consensusRatio < 2.15) {
-            hintBias -= 8.0; // Forte pénalité pour 2x harmonique
-          } else if (consensusRatio > 2.85 && consensusRatio < 3.15) {
-            hintBias -= 10.0; // Très forte pénalité pour 3x harmonique
-          }
-        }
-      }
-
-      // Total score avec bias anti-octave
-      final totalScore = snr + harmonicScore + hintBias;
+      // Total score avec fundamental bias (principe physique: favoriser les graves avec harmoniques)
+      final totalScore = snr + harmonicScore + fundamentalBias + hintBias;
 
       // Calcul de la largeur spectrale (FWHM-like: bins at -3dB from peak)
       final spectralWidth =
@@ -505,12 +506,18 @@ class DominantPitchTracker {
     }
 
     if (isPeakValid) {
+      // DÉTECTION D'ATTAQUE ULTRA-FORTE: SNR > 45 dB = vraie note franche
+      // Bypass le hold-in pour lock immédiat si c'est une attaque massive
+      final isUltraStrongAttack = bestPeak.snr > 45.0;
+      
       // Vérification de consistance : si le pic change trop, restart
       if (_lockTimer > 0 && _currentF0 > 0) {
         final deltaCents =
             1200.0 * math.log(bestPeak.freq / _currentF0).abs() / math.ln2;
-        if (deltaCents > 200.0) {
-          // Plus de 200 cents de changement = restart
+        // Tolérance augmentée pour permettre les corrections octave (164→326 Hz)
+        // 1300 cents = juste au-dessus d'une octave parfaite (1200 cents)
+        if (deltaCents > 1300.0) {
+          // Plus de 1300 cents de changement = restart
           _lockTimer = frameDurationMs; // Restart le timer
           _lastLockReason =
               "Peak inconsistent: ${deltaCents.toStringAsFixed(0)} cents jump, restarting lock timer";
@@ -523,14 +530,27 @@ class DominantPitchTracker {
 
       _currentF0 = bestPeak.freq; // Track le candidat même en search
 
-      if (_lockTimer >= holdInMs) {
-        // Lock achieved après validation complète
+      // Condition de lock: hold-in OU attaque ultra-forte
+      final shouldLock = (_lockTimer >= holdInMs) || isUltraStrongAttack;
+      
+      if (shouldLock) {
+        // Lock achieved après validation complète OU attaque ultra-forte
         _state = DominantTrackerState.locked;
         _predictedF0 = bestPeak.freq;
         _velocityCentsPerS = 0.0;
         _unlockTimer = 0;
-        _lastLockReason =
-            "SNR ${bestPeak.snr.toStringAsFixed(1)} dB >= $lockThresholdDb dB for $_lockTimer ms";
+        
+        if (isUltraStrongAttack && _lockTimer < holdInMs) {
+          _lastLockReason =
+              "INSTANT LOCK: Ultra-strong attack ${bestPeak.snr.toStringAsFixed(1)} dB > 45 dB (bypassed hold-in)";
+          // ignore: avoid_print
+          print('⚡ INSTANT LOCK: ${bestPeak.freq.toStringAsFixed(1)}Hz, SNR=${bestPeak.snr.toStringAsFixed(1)}dB (ultra-strong attack)');
+        } else {
+          _lastLockReason =
+              "SNR ${bestPeak.snr.toStringAsFixed(1)} dB >= $lockThresholdDb dB for $_lockTimer ms";
+          // ignore: avoid_print
+          print('🔒 LOCK: ${bestPeak.freq.toStringAsFixed(1)}Hz, SNR=${bestPeak.snr.toStringAsFixed(1)}dB (threshold=$lockThresholdDb dB)');
+        }
 
         // Update adaptive window
         if (adaptiveWindow) {
@@ -762,6 +782,28 @@ class DominantPitchTracker {
     }
 
     if (selectedPeak != null) {
+      // Préférence subharmonique: si le meilleur candidat semble être un harmonique (≈2*f0)
+      // et qu'il existe un pic proche de f/2 robuste, préférer le sub-candidat.
+      // Critères: |ratio - 2| < 0.06 (~±100 cents) ET subPeak SNR pas plus de 6 dB en dessous.
+      final double fBest = selectedPeak.freq;
+      final double targetSub = fBest / 2.0;
+      PeakInfo? subCandidate;
+      for (final p in peaks) {
+        final deltaC = 1200.0 * (math.log(p.freq / targetSub) / math.ln2).abs();
+        final bool narrow = p.spectralWidthHz == 0.0 || p.spectralWidthHz < narrowPeakWidthHz;
+        if (deltaC <= 35.0 && narrow && p.harmonicScore >= 1.0) {
+          // Retenir le plus fort près de f/2
+          if (subCandidate == null || p.snr > subCandidate.snr) {
+            subCandidate = p;
+          }
+        }
+      }
+      if (subCandidate != null && (selectedPeak.snr - subCandidate.snr) <= 6.0) {
+        // Bascule sur subharmonique plausible
+        _lastLockReason = "Prefer subharmonic: ${subCandidate.freq.toStringAsFixed(1)} Hz over ${selectedPeak.freq.toStringAsFixed(1)} Hz";
+        selectedPeak = subCandidate;
+      }
+
       // Update with alpha-beta filter - use MEASURED frequency, not predicted
       final measuredF0 = selectedPeak.freq;
 
@@ -824,15 +866,36 @@ class DominantPitchTracker {
       final maxJumpHz = maxJumpCentsPerS * deltaTimeS * _currentF0 / 1200.0;
       final limitedError = error.clamp(-maxJumpHz, maxJumpHz);
 
+      // ALPHA ADAPTATIF : Réduire le suivi une fois la note stable
+      // Après 1s de lock, la fréquence est considérée comme acquise → freeze partiel
+      final isStableLock = _lockTimer >= stableLockThresholdMs;
+      double effectiveAlpha;
+      if (isStableLock) {
+        // Mode stable : suivi réduit (15% au lieu de 90%) pour éviter dérive
+        // tout en restant réactif aux vrais changements de la corde
+        effectiveAlpha = 0.15; // Compromis : stable mais pas gelé
+      } else {
+        // Mode normal/acquisition : suivi rapide pour converger vite
+        effectiveAlpha = alphaPos; // 0.9 (90% nouvelle mesure)
+      }
+      
       // Alpha-beta update with measured frequency
-      _currentF0 += alphaPos * limitedError;
+      _currentF0 += effectiveAlpha * limitedError;
 
       // Velocity update in Hz/s, then convert to cents/s for consistency
+      // En mode stable, aussi réduire la velocity pour éviter dérive
       if (deltaTimeS > 1e-6 && _currentF0 > 1e-6) {
         final velocityHz = betaVel * limitedError / deltaTimeS;
         final velocityCents = 1200.0 * velocityHz / _currentF0;
-        _velocityCentsPerS = _velocityCentsPerS * 0.5 +
-            velocityCents * 0.5; // BEAUCOUP plus rapide
+        
+        if (isStableLock) {
+          // Mode stable : velocity très amortie (10% au lieu de 50%)
+          _velocityCentsPerS = _velocityCentsPerS * 0.9 + velocityCents * 0.1;
+        } else {
+          // Mode normal : velocity rapide
+          _velocityCentsPerS = _velocityCentsPerS * 0.5 + velocityCents * 0.5;
+        }
+        
         // Clamp velocity to reasonable range
         _velocityCentsPerS = _velocityCentsPerS.clamp(-200.0, 200.0);
       }
@@ -844,10 +907,12 @@ class DominantPitchTracker {
         _currentWindow += (targetWindow - _currentWindow) * 0.1;
       }
 
-      // Reset unlock timer si on trouve un pic valide
+      // Reset unlock timer et incrémenter lock timer si on trouve un pic valide
       _unlockTimer = 0;
+      _lockTimer +=
+          frameDurationMs; // IMPORTANT: accumuler le temps de lock stable
       _lastLockReason =
-          "LOCKED: f0=${_currentF0.toStringAsFixed(1)} Hz, SNR=${selectedPeak.snr.toStringAsFixed(1)} dB";
+          "LOCKED: f0=${_currentF0.toStringAsFixed(1)} Hz, SNR=${selectedPeak.snr.toStringAsFixed(1)} dB, lockTime=${_lockTimer}ms";
     } else {
       // No valid candidate found - MAIS tracker autonome plus tenace
       // Ne pas incrémenter unlock timer si on n'a juste pas de hints YIN/Harm
@@ -863,6 +928,9 @@ class DominantPitchTracker {
           }
         }
       }
+
+      // Continuer à incrémenter lockTimer même sans pic (on est toujours locked)
+      _lockTimer += frameDurationMs;
 
       if (_transientGuardMs > 0) {
         // Freeze unlock during transient guard
@@ -908,42 +976,124 @@ class DominantPitchTracker {
       if (outsideCompetitors.isNotEmpty) {
         final strongestOutside = outsideCompetitors
             .reduce((a, b) => a.totalScore > b.totalScore ? a : b);
-        // Adaptive competitor margin: base + slope * SNR shortfall
-        // Estimate current inside-window SNR (best or 0 if none)
+
+        // HYPER-STABLE MODE: Si la note est lockée depuis longtemps avec bon SNR,
+        // il faut une VRAIE attaque franche (35+ dB) pour justifier un unlock
+        final isStableLock = _lockTimer >= stableLockThresholdMs;
         final insideSnr = candidates.isNotEmpty
             ? candidates.map((p) => p.snr).reduce(math.max)
             : 0.0;
-        final snrShortfall = math.max(0.0, lockThresholdDb - insideSnr);
-        final effectiveMargin = competitorMarginBaseDb +
-            competitorMarginAdaptiveSlope * snrShortfall;
-        if (_transientGuardMs == 0 &&
-            strongestOutside.snr > lockThresholdDb + effectiveMargin) {
-          strongCompetitor = true;
-          _lastLockReason =
-              "Strong competitor (margin ${effectiveMargin.toStringAsFixed(1)} dB) at ${strongestOutside.freq.toStringAsFixed(1)} Hz (${strongestOutside.snr.toStringAsFixed(1)} dB)";
+
+        if (isStableLock && insideSnr > unlockThresholdDb) {
+          // Mode stable : exiger une attaque FRANCHE (35 dB SNR minimum)
+          // pour éviter de unlock sur du bruit structuré
+          if (_transientGuardMs == 0 &&
+              strongestOutside.snr > freshAttackSnrDb) {
+            strongCompetitor = true;
+            _lastLockReason =
+                "Strong competitor [STABLE MODE] (SNR ${strongestOutside.snr.toStringAsFixed(1)} dB > ${freshAttackSnrDb.toStringAsFixed(1)} dB) at ${strongestOutside.freq.toStringAsFixed(1)} Hz";
+          }
+        } else {
+          // Mode normal : marge adaptative standard
+          final snrShortfall = math.max(0.0, lockThresholdDb - insideSnr);
+          final effectiveMargin = competitorMarginBaseDb +
+              competitorMarginAdaptiveSlope * snrShortfall;
+          if (_transientGuardMs == 0 &&
+              strongestOutside.snr > lockThresholdDb + effectiveMargin) {
+            strongCompetitor = true;
+            _lastLockReason =
+                "Strong competitor [NORMAL MODE] (margin ${effectiveMargin.toStringAsFixed(1)} dB) at ${strongestOutside.freq.toStringAsFixed(1)} Hz (${strongestOutside.snr.toStringAsFixed(1)} dB)";
+          }
         }
       }
 
-      // Check unlock conditions - logique normale basée sur les pics détectés
-      final bestAvailableSnr =
-          peaks.isNotEmpty ? peaks.map((p) => p.snr).reduce(math.max) : -120.0;
+      // Check unlock conditions - IMPORTANT: mesurer DIRECTEMENT le SNR à la fréquence lockée
+      // dans le spectre, indépendamment de la liste des candidates filtrés
+      double lockedPeakSnr = -120.0;
+
+      // Mesure directe dans le spectre à _currentF0
+      final lockedBin =
+          (_currentF0 / binWidth).round().clamp(0, spectrumDb.length - 1);
+      if (lockedBin > 0 && lockedBin < spectrumDb.length - 1) {
+        final peakDb = spectrumDb[lockedBin];
+
+        // Calculer le bruit local (médiane des voisins, comme dans _findProminentPeaks)
+        final medianStart = math.max(0, lockedBin - neighborSpanBins);
+        final medianEnd =
+            math.min(spectrumDb.length - 1, lockedBin + neighborSpanBins);
+        final localValues = <double>[];
+        for (int j = medianStart; j <= medianEnd; j++) {
+          if ((j - lockedBin).abs() > 2) {
+            localValues.add(spectrumDb[j]);
+          }
+        }
+        if (localValues.isNotEmpty) {
+          localValues.sort();
+          final medianDb = localValues[localValues.length ~/ 2];
+          lockedPeakSnr = peakDb - medianDb;
+          _log(
+              '[LOCKED SNR] Direct measurement at ${_currentF0.toStringAsFixed(1)}Hz: peak=${peakDb.toStringAsFixed(1)}dB, median=${medianDb.toStringAsFixed(1)}dB, SNR=${lockedPeakSnr.toStringAsFixed(1)}dB');
+        }
+      }
+
       // If a local noise floor is provided, adjust SNR guardrail to lock persistence floor
       double adjustedUnlockThreshold = unlockThresholdDb;
       if (_lastLocalNoiseFloorDb != 0.0) {
-        // Interpret bestAvailableSnr as peakDb - localNoiseDb (already SNR),
+        // Interpret lockedPeakSnr as peakDb - localNoiseDb (already SNR),
         // but we enforce a minimum allowed SNR floor while locked.
         adjustedUnlockThreshold = math.min(unlockThresholdDb, lockedSnrFloorDb);
       }
 
-      // CONDITIONS D'UNLOCK RESTAURÉES: Équilibre responsivité/stabilité
+      // LOG DÉTAILLÉ des conditions d'unlock AVANT décision
+      _log(
+          '[UNLOCK CHECK] lockedPeakSnr=${lockedPeakSnr.toStringAsFixed(1)}dB, threshold=${adjustedUnlockThreshold.toStringAsFixed(1)}dB, unlockTimer=$_unlockTimer/${holdOutMs}ms');
+      _log(
+          '[UNLOCK CHECK] strongCompetitor=$strongCompetitor, transientGuard=$_transientGuardMs ms, lockTimer=$_lockTimer ms');
+
+      // PRINT pour console Flutter (visible immédiatement)
+      if (_state == DominantTrackerState.locked && _currentF0 > 200) {
+        // ignore: avoid_print
+        print(
+            '[UNLOCK CHECK] f0=${_currentF0.toStringAsFixed(1)}Hz, SNR=${lockedPeakSnr.toStringAsFixed(1)}dB, threshold=${adjustedUnlockThreshold.toStringAsFixed(1)}dB, timer=$_unlockTimer/${holdOutMs}ms, competitor=$strongCompetitor, lockTime=${_lockTimer}ms');
+      }
+
+      // CONDITIONS D'UNLOCK: utilise le SNR de la note lockée dans SA zone de fréquence
+      final isStableLock = _lockTimer >= stableLockThresholdMs;
+
+      // En mode hyper-stable (après 1s avec EMA gelé), ignore SNR local
+      // Ne délock QUE sur concurrent extrêmement fort (freshAttackSnrDb = 50 dB)
+      final snrCondition = isStableLock
+          ? false // Mode stable : ignore les variations de SNR (spectre gelé)
+          : (lockedPeakSnr < adjustedUnlockThreshold &&
+              _unlockTimer >= holdOutMs); // Mode normal : SNR check
+
+      // En mode hyper-stable, PAS de timeout automatique (sauf si SNR vraiment faible)
+      final timeoutCondition = isStableLock
+          ? false // Mode stable : jamais de timeout automatique
+          : (_unlockTimer >= holdOutMs * 2); // Mode normal : timeout à 600 ms
+
       final shouldUnlock = (_transientGuardMs == 0) &&
-          ((bestAvailableSnr < adjustedUnlockThreshold &&
-                  _unlockTimer >= holdOutMs) || // Guarded by SNR floor
+          (snrCondition || // SNR local trop faible (ignoré si stable)
               (strongCompetitor &&
-                  _unlockTimer >= 100) || // Rapide pour concurrent
-              (_unlockTimer >= holdOutMs * 2)); // Force unlock raisonnable
+                  _unlockTimer >= 100) || // Rapide pour concurrent (50+ dB requis si stable)
+              timeoutCondition); // Timeout seulement si pas en mode stable
+
+      // Log détaillé AVANT unlock pour diagnostique
+      if (_transientGuardMs == 0 && (snrCondition || (strongCompetitor && _unlockTimer >= 100) || timeoutCondition)) {
+        // ignore: avoid_print
+        print('⚠️ UNLOCK IMMINENT: isStable=$isStableLock (lock=${_lockTimer}ms), '
+            'snrCondition=$snrCondition (SNR=${lockedPeakSnr.toStringAsFixed(1)}dB), '
+            'strongComp=$strongCompetitor (timer=${_unlockTimer}ms), '
+            'timeoutCond=$timeoutCondition');
+      }
+      
+      _log(
+          '[UNLOCK DECISION] shouldUnlock=$shouldUnlock, isStable=$isStableLock, timeout=$timeoutCondition');
 
       if (shouldUnlock) {
+        // Capturer la durée de lock AVANT de la reset
+        final wasLockedForMs = _lockTimer;
+
         _state = DominantTrackerState.search;
         _lockTimer = 0;
         _currentF0 = 0.0;
@@ -951,20 +1101,25 @@ class DominantPitchTracker {
 
         String unlockReason;
         if (strongCompetitor) {
-          unlockReason = "Unlocked: strong competitor";
+          unlockReason =
+              "Unlocked: strong competitor (was locked ${wasLockedForMs}ms)";
         } else if (_unlockTimer >= holdOutMs * 2) {
-          unlockReason = "Unlocked: timeout ${_unlockTimer}ms (force unlock)";
+          unlockReason =
+              "Unlocked: timeout ${_unlockTimer}ms/${holdOutMs * 2}ms (force unlock after ${wasLockedForMs}ms lock)";
         } else {
           unlockReason =
-              "Unlocked: SNR ${bestAvailableSnr.toStringAsFixed(1)} dB < ${adjustedUnlockThreshold.toStringAsFixed(1)} dB for $_unlockTimer ms";
+              "Unlocked: SNR ${lockedPeakSnr.toStringAsFixed(1)}dB < ${adjustedUnlockThreshold.toStringAsFixed(1)}dB for $_unlockTimer ms (was locked ${wasLockedForMs}ms)";
         }
         _lastLockReason = unlockReason;
+        _log('[UNLOCK EXECUTED] $unlockReason');
+        // ignore: avoid_print
+        print('🔓 UNLOCK: $unlockReason');
       } else {
         final autonomousMode = (yinHint == null || yinHint <= 0) &&
             (harmonicHint == null || harmonicHint <= 0);
         final modeStr = autonomousMode ? "AUTONOMOUS MODE" : "WITH HINTS";
         _lastLockReason =
-            "Hold-out ($modeStr): $_unlockTimer/$holdOutMs ms, best SNR ${bestAvailableSnr.toStringAsFixed(1)} dB";
+            "Hold-out ($modeStr): $_unlockTimer/$holdOutMs ms, locked peak SNR ${lockedPeakSnr.toStringAsFixed(1)} dB";
         // Decay velocity when no peak found to prevent accumulation
         _velocityCentsPerS *= 0.8; // 20% decay per frame without measurement
       }
@@ -1163,15 +1318,64 @@ class DominantPitchTracker {
         (fMax / binWidth).floor().clamp(minBin, spectrumDb.length - 1);
     if (maxBin <= minBin) return -120.0;
     double sum = 0.0;
-    int count = 0;
     for (int i = minBin; i <= maxBin; i++) {
-      final v = spectrumDb[i];
-      if (v.isFinite) {
-        sum += v;
-        count++;
+      sum += spectrumDb[i];
+    }
+    return sum / (maxBin - minBin + 1);
+  }
+
+  /// Vérifie si une fréquence candidate a des harmoniques confirmés dans le spectre.
+  /// C'est la méthode PRO pour identifier la vraie fondamentale:
+  /// - Si f0 est la fondamentale, on doit trouver 2f0, 3f0, 4f0, etc. dans le spectre
+  /// - Si f0 est déjà un harmonique (ex: 2×vraie_f0), on ne trouvera pas sa série complète
+  bool _hasConfirmedHarmonics(
+    Float32List spectrumDb,
+    double candidateF0,
+    double binWidth, {
+    int minHarmonics = 2,
+    double harmonicThresholdDb = -15.0,
+  }) {
+    int confirmedCount = 0;
+
+    // Vérifier les harmoniques 2, 3, 4, 5 (suffisant pour guitare)
+    for (int h = 2; h <= 5; h++) {
+      final harmFreq = candidateF0 * h;
+
+      // Sortir si l'harmonique dépasse fMax
+      if (harmFreq > fMax) break;
+
+      final harmBin = (harmFreq / binWidth).round();
+      if (harmBin >= spectrumDb.length) break;
+
+      // Chercher le pic dans une fenêtre de ±2 bins autour de la position théorique
+      double maxDbInWindow = -999.0;
+      for (int offset = -2; offset <= 2; offset++) {
+        final bin = harmBin + offset;
+        if (bin >= 0 && bin < spectrumDb.length) {
+          maxDbInWindow = math.max(maxDbInWindow, spectrumDb[bin]);
+        }
+      }
+
+      // Calculer le bruit local autour de cet harmonique (±10 bins mais pas dans la fenêtre ±2)
+      double noiseSum = 0.0;
+      int noiseCount = 0;
+      for (int offset = -10; offset <= 10; offset++) {
+        if (offset.abs() <= 2) continue; // skip la fenêtre du pic
+        final bin = harmBin + offset;
+        if (bin >= 0 && bin < spectrumDb.length) {
+          noiseSum += spectrumDb[bin];
+          noiseCount++;
+        }
+      }
+      final localNoise = noiseCount > 0 ? noiseSum / noiseCount : -120.0;
+
+      // L'harmonique est confirmé si le pic est suffisamment au-dessus du bruit local
+      final snrDb = maxDbInWindow - localNoise;
+      if (snrDb >= harmonicThresholdDb) {
+        confirmedCount++;
       }
     }
-    if (count == 0) return -120.0;
-    return sum / count;
+
+    return confirmedCount >= minHarmonics;
   }
 }

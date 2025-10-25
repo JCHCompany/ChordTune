@@ -68,7 +68,7 @@ class SpectroidFrame {
 
 class SpectroidEngine {
   // Toggle to enable verbose DSP logs; disabled by default for performance
-  static const bool kDspVerboseLogs = false;
+  static const bool kDspVerboseLogs = true;
   final AudioRecorder _rec = AudioRecorder();
   StreamSubscription<Uint8List>? _sub;
   Timer? _scheduler;
@@ -99,6 +99,10 @@ class SpectroidEngine {
   // Post-decimation HPF state (first-order IIR)
   double _hpfX1 = 0.0, _hpfY1 = 0.0;
   double _hpfAlpha = 0.0;
+  
+  // EMA lock delay: apply low EMA only after 1s in LOCKED state
+  DateTime? _lockStartTime;
+  static const _emaLockDelayMs = 1000; // 1 second delay after lock
 
   Future<void> start(
       {required SpectroidConfig cfg,
@@ -443,31 +447,10 @@ class SpectroidEngine {
       // Averaging (EMA): prefer linear domain for unbiased PSD precise measurements
       if (_prevLinear == null || _prevLinear!.length != mag.length) {
         _prevLinear = Float32List.fromList(mag);
-      } else {
-        final a = cfg.emaAlphaAmp;
-        // Default: linear domain EMA (recommended for PSD accuracy)
-        // Optional: log domain EMA (for visual smoothness, may introduce bias)
-        if (cfg.averagingDomain == AveragingDomain.linear) {
-          emaLinearInPlace(_prevLinear!, mag, a);
-        } else {
-          final curDb = Float32List(mag.length);
-          final prevDb = Float32List(mag.length);
-          for (int i = 0; i < mag.length; i++) {
-            curDb[i] = 10 * math.log(mag[i] + 1e-20) / math.ln10;
-            prevDb[i] = 10 * math.log(_prevLinear![i] + 1e-20) / math.ln10;
-          }
-          for (int i = 0; i < mag.length; i++) {
-            prevDb[i] = a * curDb[i] + (1 - a) * prevDb[i];
-            _prevLinear![i] = math.pow(10, prevDb[i] / 10.0).toDouble();
-          }
-        }
       }
-      mag = _prevLinear!;
+      // L'EMA sera appliqué APRÈS le pitch tracking (alpha dépend de l'état LOCKED/SEARCH)
 
-      // Optional light FIR smoothing for visual trace
-      if (cfg.firSmoothing) {
-        _applyFirSmoothing(mag);
-      }
+      // Continuer avec mag pour le pitch tracking (pas encore lissé)
 
       // Debug: verify spectrum metrics and low-band stats (0-100 Hz)
       if (kDspVerboseLogs && mag.isNotEmpty) {
@@ -523,6 +506,8 @@ class SpectroidEngine {
       String lockReason = "";
       double currentWindow = 60.0;
       double localNoiseFloorDb = 0.0;
+      // Noise detection visualization
+
       // Hybrid Option C: YIN + Harmonic + Fusion
       double f0Yin = 0.0, confYin = 0.0;
       double f0Harm = 0.0, confHarm = 0.0;
@@ -751,6 +736,8 @@ class SpectroidEngine {
               ? f0Harm
               : _lastValidHarm, // Utilise dernière valeur si Harm s'arrête
           localNoiseFloorDb: localNoiseFloorDb,
+          externalTransientDetected:
+              false, // Plus utilisé - EMA géré par état LOCKED
         );
 
         // Safety bounds pour DominantTracker (plus tolérant pour signaux faibles)
@@ -767,6 +754,61 @@ class SpectroidEngine {
         lockReason = result.lockReason;
         currentWindow = result.currentWindow;
       }
+
+      // APPLIQUER EMA MAINTENANT
+      // Stratégie avec délai: attendre 1s après LOCK avant d'appliquer EMA bas
+      double adaptiveAlpha;
+      if (trackerState == 'locked') {
+        // Démarrer le timer si passage en LOCKED
+        _lockStartTime ??= DateTime.now();
+        
+        // Vérifier si le délai est écoulé
+        final lockDuration = DateTime.now().difference(_lockStartTime!).inMilliseconds;
+        if (lockDuration >= _emaLockDelayMs) {
+          // Délai écoulé → appliquer EMA bas
+          adaptiveAlpha = cfg.emaAlphaLocked;
+        } else {
+          // Encore dans le délai → garder EMA normal (SEARCH)
+          adaptiveAlpha = 0.5;
+        }
+      } else {
+        // SEARCH ou autre → reset timer et utiliser EMA normal
+        _lockStartTime = null;
+        adaptiveAlpha = 0.5;
+      }
+
+      if (kDspVerboseLogs) {
+        final lockTime = _lockStartTime != null 
+            ? DateTime.now().difference(_lockStartTime!).inMilliseconds 
+            : 0;
+        debugPrint(
+            '📊 EMA: α=${adaptiveAlpha.toStringAsFixed(3)} (state=$trackerState, lockTime=${lockTime}ms)');
+      }
+
+      if (_prevLinear != null && _prevLinear!.length == mag.length) {
+        if (cfg.averagingDomain == AveragingDomain.linear) {
+          emaLinearInPlace(_prevLinear!, mag, adaptiveAlpha);
+        } else {
+          final curDb = Float32List(mag.length);
+          final prevDb = Float32List(mag.length);
+          for (int i = 0; i < mag.length; i++) {
+            curDb[i] = 10 * math.log(mag[i] + 1e-20) / math.ln10;
+            prevDb[i] = 10 * math.log(_prevLinear![i] + 1e-20) / math.ln10;
+          }
+          for (int i = 0; i < mag.length; i++) {
+            prevDb[i] =
+                adaptiveAlpha * curDb[i] + (1 - adaptiveAlpha) * prevDb[i];
+            _prevLinear![i] = math.pow(10, prevDb[i] / 10.0).toDouble();
+          }
+        }
+        mag = _prevLinear!;
+      }
+
+      // Optional light FIR smoothing for visual trace
+      if (cfg.firSmoothing) {
+        _applyFirSmoothing(mag);
+      }
+
       onFrame(SpectroidFrame(
         mag,
         peakFreq,
@@ -990,4 +1032,6 @@ class SpectroidEngine {
     _lastValidYin = null;
     _lastValidHarm = null;
   }
+
+  /// Interpoler les valeurs NaN (zones de pics) avec interpolation linéaire
 }

@@ -112,6 +112,8 @@ class SpectroidConfig extends Equatable {
   final double widePeakMarginDb; // Competitor margin for wide peaks (tolerated)
   // Locked-state persistence: don't unlock on SNR until below this floor vs local noise
   final double lockedSnrFloorDb; // e.g. -128 dB
+  // Transient detection: ratio of bins with jump to detect diffuse noise (0..1)
+  final double transientDiffuseThresholdRatio; // e.g. 0.25 = 25% of bins
   // Whitening option
   final bool whiteningEnabled;
   // Show tracker state overlay
@@ -122,6 +124,7 @@ class SpectroidConfig extends Equatable {
   final int displayBandMax; // 4k/8k/20k etc.
 
   final double emaAlphaAmp; // 0..1 visual smoothing
+  final double emaAlphaLocked; // 0..1 EMA in LOCKED state (lower = more frozen)
   final bool peakTracking;
   final int peakSearchMin;
   final int peakSearchMax;
@@ -198,7 +201,7 @@ class SpectroidConfig extends Equatable {
         3.0, // SIGNAUX FAIBLES: Pour lock à -50dB (was 6.0)
     this.dominantUnlockThresholdDb =
         1.0, // ÉQUILIBRÉ: Responsive mais stable (was -2.0)
-    this.dominantHoldInMs = 150, // RESTAURÉ: Timing historique stable (was 80)
+    this.dominantHoldInMs = 300, // Augmenté pour stabiliser l'attaque (was 150)
     this.dominantHoldOutMs =
         150, // RESTAURÉ: Valeur historique responsive (was 400)
     this.dominantLockWindowCents =
@@ -217,11 +220,13 @@ class SpectroidConfig extends Equatable {
         3.0, // Marge faible pour pics étroits (unlock rapide)
     this.widePeakMarginDb = 12.0, // Marge haute pour bruit (toléré)
     this.lockedSnrFloorDb = -128.0,
+    this.transientDiffuseThresholdRatio = 0.25, // 25% des bins = bruit diffus
     this.whiteningEnabled = false,
     this.showTrackerState = true,
     this.overlayCentsBand = 20.0,
     this.displayBandMax = 8000,
     this.emaAlphaAmp = 0.99,
+    this.emaAlphaLocked = 0.25,
     this.peakTracking = true,
     this.peakSearchMin = 35,
     this.peakSearchMax = 4000,
@@ -255,6 +260,7 @@ class SpectroidConfig extends Equatable {
     int? firDecimation,
     int? displayBandMax,
     double? emaAlphaAmp,
+    double? emaAlphaLocked,
     bool? peakTracking,
     int? peakSearchMin,
     int? peakSearchMax,
@@ -320,6 +326,7 @@ class SpectroidConfig extends Equatable {
     double? narrowPeakMarginDb,
     double? widePeakMarginDb,
     double? lockedSnrFloorDb,
+    double? transientDiffuseThresholdRatio,
     bool? whiteningEnabled,
     bool? showTrackerState,
     double? overlayCentsBand,
@@ -413,11 +420,14 @@ class SpectroidConfig extends Equatable {
       narrowPeakMarginDb: narrowPeakMarginDb ?? this.narrowPeakMarginDb,
       widePeakMarginDb: widePeakMarginDb ?? this.widePeakMarginDb,
       lockedSnrFloorDb: lockedSnrFloorDb ?? this.lockedSnrFloorDb,
+      transientDiffuseThresholdRatio:
+          transientDiffuseThresholdRatio ?? this.transientDiffuseThresholdRatio,
       whiteningEnabled: whiteningEnabled ?? this.whiteningEnabled,
       showTrackerState: showTrackerState ?? this.showTrackerState,
       overlayCentsBand: overlayCentsBand ?? this.overlayCentsBand,
       displayBandMax: displayBandMax ?? this.displayBandMax,
       emaAlphaAmp: emaAlphaAmp ?? this.emaAlphaAmp,
+      emaAlphaLocked: emaAlphaLocked ?? this.emaAlphaLocked,
       peakTracking: peakTracking ?? this.peakTracking,
       peakSearchMin: peakSearchMin ?? this.peakSearchMin,
       peakSearchMax: peakSearchMax ?? this.peakSearchMax,
@@ -442,12 +452,14 @@ class SpectroidConfig extends Equatable {
         fsCapture: 48000,
         resampleTo: 16000,
         fftSize: 1024,
-        // Moderate overlap for smooth UI with ~40-45 ms hop at eff. Fs
-        overlap: 0.75,
+        // Overlap modéré : compromis entre résolution temps/fréquence
+        overlap: 0.50, // 50% → hopSize = 512 samples → bon équilibre
         window: SpectroidWindow.hann,
-        // Much faster decay for maximum reactivity
-        emaAlphaAmp: 0.98,
-        emaAlphaFreq: 0.85,
+        // EMA adaptatif implémenté dans spectroid_engine.dart:
+        // - Signal stable: utilise cette valeur élevée (99% nouveau)
+        // - Transitoire détecté: réduit automatiquement à 10% pour rejeter bruit
+        emaAlphaAmp: 0.98, // Base: 98% nouveau / 2% ancien → très réactif
+        emaAlphaFreq: 0.85, // Réactivité fréquence peak tracking
         displayBandMax: 8000,
         dcRemove: true,
         spectroidMode: false,
@@ -455,24 +467,41 @@ class SpectroidConfig extends Equatable {
         displayMode: DisplayMode.psdPrecise,
         // Keep decimation modest to avoid very long windows (slow decay)
         firDecimation: 1,
-        decimLevels: 5, // 2^2 = 4 => eff. Fs ≈ 12 kHz, window ≈ 85 ms
+        decimLevels: 5, // Compromis: résolution basses fréquences vs réactivité
         lowFreqHpf: LowFreqHighPass.hz10,
         enablePitch: true,
-        // CORRECTIONS URGENTES: Éviter lock sans signal + convergence rapide
+        // Tracker tuning: favor hints (YIN/Fusion) over raw peak strength
         dominantLockThresholdDb:
-            20.0, // BEAUCOUP plus strict - éviter lock sans signal
+            25.0, // SNR minimum pour lock (relatif au bruit local)
         dominantUnlockThresholdDb:
-            10.0, // Plus strict aussi pour éviter lock fantôme
-        dominantHoldInMs: 80, // PLUS RAPIDE - réactivité immédiate
-        dominantHoldOutMs: 30, // TRÈS RAPIDE unlock
-        dominantLockWindowCents: 80.0, // Fenêtre plus large pour exploration
-        dominantMaxJumpCentsPerS: 1000.0, // BEAUCOUP plus rapide - 10x plus
+            2.0, // Plus tolérant: évite les délocks furtifs quand SNR baisse brièvement
+        dominantHoldInMs:
+            120, // Laisse le temps au fondamental d'émerger pour éviter les lock sur harmoniques
+        dominantHoldOutMs:
+            900, // Tient la note nettement plus longtemps en absence de vrai concurrent
+        dominantLockWindowCents: 60.0, // standard window
+        dominantMaxJumpCentsPerS: 300.0, // Un peu moins agressif pour éviter les sauts sur bruit
+        transientDiffuseThresholdRatio:
+            0.40, // Plus difficile de classer "bruit diffus" → moins de faux négatifs
+        // Post-lock protection & competitor policy
+        lockedSnrFloorDb:
+            -18.0, // Ne pas délocker sur SNR tant que > -18 dB vs bruit local
+        dominantCompetitorMarginBaseDb:
+            10.0, // Demande un vrai concurrent (≥ +10 dB) pour lâcher la note
+        dominantCompetitorMarginAdaptiveSlope:
+            0.15, // Adaptation douce quand SNR général est plus faible
+        // Fusion des estimateurs: privilégier YIN (fondamental) sur attaque
+        fusionYinWeight: 0.95,
+        fusionHarmWeight: 0.25,
+        // Anti-octave: plus strict pour éviter faux sous-harmoniques (G3→A2)
+        antiOctaveSubharmThresh: 0.45,
         firSmoothing: false, // Disabled for max reactivity
         audioSource: AudioSource.unprocessed,
         dcFilter: DcFilterType.iir,
         notchFilter: NotchFilter.hz60,
         disableAudioEffects: true,
-        guidanceEnabled: true,
+                // Guidance globale désactivée: éviter de renforcer une mauvaise note cible
+                guidanceEnabled: false,
         guidedTargetsHz: [
           82.4069, // E2
           110.0000, // A2
@@ -481,8 +510,8 @@ class SpectroidConfig extends Equatable {
           246.9417, // B3
           329.6276, // E4
         ],
-        guidanceWindowCents: 100.0,
-        guidanceBiasDb: 3.0,
+                guidanceWindowCents: 80.0,
+                guidanceBiasDb: 2.0,
       );
 
   // Keep only the 'spectre' preset as the single default configuration
@@ -505,6 +534,7 @@ class SpectroidConfig extends Equatable {
         lowFreqHpf,
         displayBandMax,
         emaAlphaAmp,
+        emaAlphaLocked,
         peakTracking,
         peakSearchMin,
         peakSearchMax,
@@ -565,6 +595,7 @@ class SpectroidConfig extends Equatable {
         widePeakMarginDb,
         dominantCompetitorMarginAdaptiveSlope,
         lockedSnrFloorDb,
+        transientDiffuseThresholdRatio,
         whiteningEnabled,
         showTrackerState,
         overlayCentsBand,

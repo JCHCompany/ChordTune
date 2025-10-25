@@ -18,6 +18,10 @@ class SpectrumPainter extends CustomPainter {
   final double? f0Tracked;
   final double? overlayCentsBand;
   final String? trackerState;
+  // Noise detection visualization
+  final double noiseFloorMeanDb; // Niveau de référence
+  final List<dynamic> excludedPeaks; // Pics exclus (cadres jaunes)
+  final Float32List? noiseFloorCurve; // Courbe verte bin par bin
 
   SpectrumPainter({
     required this.magLinear,
@@ -31,6 +35,9 @@ class SpectrumPainter extends CustomPainter {
     this.f0Tracked,
     this.overlayCentsBand,
     this.trackerState,
+    this.noiseFloorMeanDb = 0.0,
+    this.excludedPeaks = const [],
+    this.noiseFloorCurve,
   });
 
   @override
@@ -53,10 +60,12 @@ class SpectrumPainter extends CustomPainter {
       if (v > maxDb) maxDb = v;
       if (v < minDb) minDb = v;
     }
-    
+
     // Debug spectrum levels occasionally
-    if (++spectrumPainterDebugCounter % 180 == 0) { // ~every 3s at ~60fps
-      debugPrint('Spectrum levels (10*log10): min=${minDb.toStringAsFixed(1)}$displayUnit, max=${maxDb.toStringAsFixed(1)}$displayUnit, range=${(maxDb-minDb).toStringAsFixed(1)}dB, fs=${fs}Hz, bins=${magLinear.length}');
+    if (++spectrumPainterDebugCounter % 180 == 0) {
+      // ~every 3s at ~60fps
+      debugPrint(
+          'Spectrum levels (10*log10): min=${minDb.toStringAsFixed(1)}$displayUnit, max=${maxDb.toStringAsFixed(1)}$displayUnit, range=${(maxDb - minDb).toStringAsFixed(1)}dB, fs=${fs}Hz, bins=${magLinear.length}');
     }
 
     // Use absolute dB scale: 0 dB (top) to -140 dB (bottom)
@@ -68,7 +77,7 @@ class SpectrumPainter extends CustomPainter {
     // - [10, fHi] uses classic log10(f)
     double log10p1(double x) => math.log(x + 1.0) / math.ln10;
     double log10(double x) => math.log(x) / math.ln10;
-  // Note: start axis mapping from 0 Hz implicitly (see freqToT)
+    // Note: start axis mapping from 0 Hz implicitly (see freqToT)
     final double decade0Width = 0.5; // 50% width for 0–10 Hz
     // Total width in "decades" units
     final double normalDecades = (log10(fHi) - log10(10.0));
@@ -111,18 +120,18 @@ class SpectrumPainter extends CustomPainter {
       // Create path for continuous line at spectrum level
       final path = Path();
       bool isFirstPoint = true;
-      
+
       for (int i = 0; i < nBars; i++) {
         final f0 = bands[i];
         final f1 = bands[i + 1];
         if (f1 <= 0 || f0 >= fHi) continue;
-        
+
         final fCenter = (f0 + f1) / 2.0; // Use band center for plotting
         final t = freqToT(fCenter.clamp(0.0, fHi));
         final x = (t * size.width).toDouble();
         final v = valuesDb[i].clamp(dbBottom, dbTop).toDouble();
         final y = size.height * ((dbTop - v) / (dbTop - dbBottom));
-        
+
         if (isFirstPoint) {
           path.moveTo(x, y);
           isFirstPoint = false;
@@ -130,7 +139,7 @@ class SpectrumPainter extends CustomPainter {
           path.lineTo(x, y);
         }
       }
-      
+
       canvas.drawPath(path, linePaint);
     } else {
       // Draw continuous PSD trace
@@ -178,11 +187,16 @@ class SpectrumPainter extends CustomPainter {
       for (int g = 0; g >= dbBottom; g -= 20) {
         // y: 0 dB at top, -140 dB at bottom
         final y = size.height * ((dbTop - g) / (dbTop - dbBottom));
-        canvas.drawLine(Offset(0, y), Offset(size.width, y), Paint()
-          ..color = Colors.white10
-          ..strokeWidth = 0.8);
+        canvas.drawLine(
+            Offset(0, y),
+            Offset(size.width, y),
+            Paint()
+              ..color = Colors.white10
+              ..strokeWidth = 0.8);
         final tp = TextPainter(
-          text: TextSpan(text: '$g', style: const TextStyle(color: Colors.white54, fontSize: 9)),
+          text: TextSpan(
+              text: '$g',
+              style: const TextStyle(color: Colors.white54, fontSize: 9)),
           textDirection: TextDirection.ltr,
         )..layout();
         tp.paint(canvas, Offset(2, y - tp.height / 2));
@@ -191,10 +205,18 @@ class SpectrumPainter extends CustomPainter {
       for (final fTick in [0, 10, 100, 1000, 10000]) {
         if (fTick == 0) {
           final x = 0.0;
-          canvas.drawLine(Offset(x, 0), Offset(x, size.height), Paint()
-            ..color = Colors.white30
-            ..strokeWidth = 1);
-          final tp = TextPainter(text: const TextSpan(text: '0', style: TextStyle(color: Colors.white54, fontSize: 10)), textDirection: TextDirection.ltr)..layout();
+          canvas.drawLine(
+              Offset(x, 0),
+              Offset(x, size.height),
+              Paint()
+                ..color = Colors.white30
+                ..strokeWidth = 1);
+          final tp = TextPainter(
+              text: const TextSpan(
+                  text: '0',
+                  style: TextStyle(color: Colors.white54, fontSize: 10)),
+              textDirection: TextDirection.ltr)
+            ..layout();
           tp.paint(canvas, Offset(x + 2, size.height - tp.height - 2));
           continue;
         }
@@ -208,30 +230,56 @@ class SpectrumPainter extends CustomPainter {
             ..color = Colors.white30
             ..strokeWidth = 1,
         );
-        final label = fTick >= 1000 ? '${(fTick / 1000).toStringAsFixed(fTick % 1000 == 0 ? 0 : 1)}k' : '$fTick';
-        final tp = TextPainter(text: TextSpan(text: label, style: const TextStyle(color: Colors.white54, fontSize: 10)), textDirection: TextDirection.ltr)..layout();
+        final label = fTick >= 1000
+            ? '${(fTick / 1000).toStringAsFixed(fTick % 1000 == 0 ? 0 : 1)}k'
+            : '$fTick';
+        final tp = TextPainter(
+            text: TextSpan(
+                text: label,
+                style: const TextStyle(color: Colors.white54, fontSize: 10)),
+            textDirection: TextDirection.ltr)
+          ..layout();
         tp.paint(canvas, Offset(x - tp.width / 2, size.height - tp.height - 2));
       }
-      final hzTp = TextPainter(text: const TextSpan(text: 'Hz', style: TextStyle(color: Colors.white60, fontSize: 10)), textDirection: TextDirection.ltr)..layout();
-      hzTp.paint(canvas, Offset(size.width - hzTp.width - 2, size.height - hzTp.height - 2));
-      final dbTp = TextPainter(text: TextSpan(text: displayUnit, style: const TextStyle(color: Colors.white60, fontSize: 10)), textDirection: TextDirection.ltr)..layout();
+      final hzTp = TextPainter(
+          text: const TextSpan(
+              text: 'Hz',
+              style: TextStyle(color: Colors.white60, fontSize: 10)),
+          textDirection: TextDirection.ltr)
+        ..layout();
+      hzTp.paint(canvas,
+          Offset(size.width - hzTp.width - 2, size.height - hzTp.height - 2));
+      final dbTp = TextPainter(
+          text: TextSpan(
+              text: displayUnit,
+              style: const TextStyle(color: Colors.white60, fontSize: 10)),
+          textDirection: TextDirection.ltr)
+        ..layout();
       dbTp.paint(canvas, const Offset(2, 2));
     }
 
     // Peak marker
     if (peakFreqHz > 0) {
-  final f = peakFreqHz.clamp(0.0, fHi);
-  final t = freqToT(f.toDouble());
+      final f = peakFreqHz.clamp(0.0, fHi);
+      final t = freqToT(f.toDouble());
       final x = t * size.width;
       final k = (f / binHz).clamp(0, valuesDb.length - 1).toInt();
       final v = valuesDb[k].clamp(dbBottom, dbTop).toDouble();
       final y = size.height * ((dbTop - v) / (dbTop - dbBottom));
-      canvas.drawCircle(Offset(x, y), 7, Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1
-        ..color = Colors.redAccent);
+      canvas.drawCircle(
+          Offset(x, y),
+          7,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1
+            ..color = Colors.redAccent);
       final label = '${f.toStringAsFixed(1)} Hz';
-      final tp = TextPainter(text: TextSpan(text: label, style: const TextStyle(color: Colors.redAccent, fontSize: 11)), textDirection: TextDirection.ltr)..layout();
+      final tp = TextPainter(
+          text: TextSpan(
+              text: label,
+              style: const TextStyle(color: Colors.redAccent, fontSize: 11)),
+          textDirection: TextDirection.ltr)
+        ..layout();
       tp.paint(canvas, Offset(x - tp.width / 2, y - 16 - tp.height));
     }
 
@@ -243,14 +291,23 @@ class SpectrumPainter extends CustomPainter {
       final state = trackerState ?? 'search';
       Color col;
       switch (state) {
-        case 'locked': col = Colors.cyanAccent; break;
-        case 'search': col = Colors.orangeAccent; break;
-        default: col = Colors.purpleAccent; break;
+        case 'locked':
+          col = Colors.cyanAccent;
+          break;
+        case 'search':
+          col = Colors.orangeAccent;
+          break;
+        default:
+          col = Colors.purpleAccent;
+          break;
       }
       // Vertical line
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), Paint()
-        ..color = col.withValues(alpha: 0.6)
-        ..strokeWidth = 1.2);
+      canvas.drawLine(
+          Offset(x, 0),
+          Offset(x, size.height),
+          Paint()
+            ..color = col.withValues(alpha: 0.6)
+            ..strokeWidth = 1.2);
       // ± cents band (approx convert cents to frequency ratio bounds)
       final band = overlayCentsBand ?? 0.0;
       if (band > 0) {
@@ -259,8 +316,95 @@ class SpectrumPainter extends CustomPainter {
         final fHiBand = (f * ratio).clamp(0.0, fHi);
         final xLo = freqToT(fLoBand) * size.width;
         final xHi = freqToT(fHiBand) * size.width;
-        canvas.drawRect(Rect.fromLTRB(xLo, 0, xHi, size.height), Paint()
-          ..color = col.withValues(alpha: 0.08));
+        canvas.drawRect(Rect.fromLTRB(xLo, 0, xHi, size.height),
+            Paint()..color = col.withValues(alpha: 0.08));
+      }
+    }
+
+    // NOISE DETECTION VISUALIZATION (en mode LOCKED uniquement)
+    if (trackerState == 'locked' && excludedPeaks.isNotEmpty) {
+      // Calculer d'abord yNoise pour l'utiliser dans les cadres
+      double yNoise = size.height;
+      if (noiseFloorMeanDb.isFinite && noiseFloorMeanDb > dbBottom) {
+        yNoise =
+            size.height * ((dbTop - noiseFloorMeanDb) / (dbTop - dbBottom));
+      }
+
+      // 1. CADRES JAUNES autour des pics exclus
+      final yellowPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0 // Bords plus fins
+        ..color = Colors.yellow.withValues(alpha: 0.7);
+
+      for (final peak in excludedPeaks) {
+        final peakFreq = (peak as dynamic).freq as double;
+        if (peakFreq <= 0 || peakFreq > fHi) continue;
+
+        // Largeur du cadre: ±5 bins ou ±10Hz (le plus grand)
+        final binHz = (fs / 2.0) / magLinear.length;
+        final halfWidthHz = math.max(10.0, binHz * 5);
+        final fLo = (peakFreq - halfWidthHz).clamp(0.0, fHi);
+        final fHi2 = (peakFreq + halfWidthHz).clamp(0.0, fHi);
+        final xLo = freqToT(fLo) * size.width;
+        final xHi2 = freqToT(fHi2) * size.width;
+
+        // Trouver le niveau du pic dans le spectre
+        final k = (peakFreq / binHz).clamp(0, valuesDb.length - 1).toInt();
+        final peakDb = valuesDb[k].clamp(dbBottom, dbTop);
+        final yTop = size.height * ((dbTop - peakDb) / (dbTop - dbBottom));
+
+        // Cadre jaune du haut du pic jusqu'à la ligne verte (plancher de bruit)
+        canvas.drawRect(
+          Rect.fromLTRB(xLo, yTop, xHi2, yNoise),
+          yellowPaint,
+        );
+      }
+
+      // 2. COURBE VERTE qui suit le plancher de bruit fréquence par fréquence
+      if (noiseFloorCurve != null && noiseFloorCurve!.isNotEmpty) {
+        final greenPaint = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0
+          ..color = Colors.greenAccent.withValues(alpha: 0.9);
+
+        final binHz = (fs / 2.0) / noiseFloorCurve!.length;
+        final path = Path();
+        bool pathStarted = false;
+
+        for (int i = 0; i < noiseFloorCurve!.length; i++) {
+          final freq = i * binHz;
+          if (freq < fLo || freq > fHi) continue;
+
+          final level = noiseFloorCurve![i];
+          if (level <= 0 || !level.isFinite) continue;
+
+          final levelDb =
+              (10 * math.log(level + 1e-20) / math.ln10).clamp(dbBottom, dbTop);
+          final x = freqToT(freq) * size.width;
+          final y = size.height * ((dbTop - levelDb) / (dbTop - dbBottom));
+
+          if (!pathStarted) {
+            path.moveTo(x, y);
+            pathStarted = true;
+          } else {
+            path.lineTo(x, y);
+          }
+        }
+
+        canvas.drawPath(path, greenPaint);
+
+        // Label (en haut à droite)
+        final label = 'Noise Floor';
+        final tp = TextPainter(
+          text: TextSpan(
+              text: label,
+              style: const TextStyle(
+                  color: Colors.greenAccent,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold)),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        tp.paint(canvas, Offset(size.width - tp.width - 5, 5));
       }
     }
   }
